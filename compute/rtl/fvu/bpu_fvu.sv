@@ -117,14 +117,19 @@ module bpu_fvu #(
   assign cmd_ew      = !cmd_red;                   // element-wise and VVECMAT write vectors
   assign p2          = pow2_ceil(cmd_cols_i);
 
+  // Offset within a 64-element block (width-safe for SPMs smaller than 64 elements).
+  function automatic logic [5:0] blk_off(input logic [AW-1:0] x);
+    blk_off = 6'(32'(x) & 32'd63);
+  endfunction
+
   always_comb begin
     cmd_legal = op_known(cmd_op_i) && (cmd_rows_i != '0) && (cmd_cols_i != '0);
     // Vector operands (and vector destinations) are 64-aligned, rows included.
-    if ((cmd_a_i[5:0] | cmd_as_i[5:0]) != '0) cmd_legal = 1'b0;
-    if (op_uses_b(cmd_op_i) && (cmd_b_i[5:0] | cmd_bs_i[5:0]) != '0) cmd_legal = 1'b0;
-    if (op_uses_c(cmd_op_i) && (cmd_c_i[5:0] | cmd_cs_i[5:0]) != '0) cmd_legal = 1'b0;
-    if (cmd_ew && cmd_d_i[5:0] != '0) cmd_legal = 1'b0;
-    if (cmd_ew && cmd_op_i != FvuVvecmat && cmd_ds_i[5:0] != '0) cmd_legal = 1'b0;
+    if ((blk_off(cmd_a_i) | blk_off(cmd_as_i)) != '0) cmd_legal = 1'b0;
+    if (op_uses_b(cmd_op_i) && (blk_off(cmd_b_i) | blk_off(cmd_bs_i)) != '0) cmd_legal = 1'b0;
+    if (op_uses_c(cmd_op_i) && (blk_off(cmd_c_i) | blk_off(cmd_cs_i)) != '0) cmd_legal = 1'b0;
+    if (cmd_ew && blk_off(cmd_d_i) != '0) cmd_legal = 1'b0;
+    if (cmd_ew && cmd_op_i != FvuVvecmat && blk_off(cmd_ds_i) != '0) cmd_legal = 1'b0;
     if (cmd_op_i == FvuVperm && (cmd_cols_i & ((16'd2 << cmd_half_log2_i) - 16'd1)) != '0)
       cmd_legal = 1'b0;
   end
@@ -161,7 +166,7 @@ module bpu_fvu #(
   assign row_start = (w_q == '0);
 
   assign need[0] = us_q && row_start;                                  // s
-  assign need[1] = ut_q && (eoff[5:0] == '0);                          // t (new 64-group)
+  assign need[1] = ut_q && (blk_off(eoff) == '0);                      // t (new 64-group)
   assign need[2] = !pad;                                               // a (every op reads a)
   assign need[3] = (ub_q && !pad) || (vm_q && r_q != '0);              // b (VVECMAT: accumulator)
   assign need[4] = uc_q && !pad;                                       // c
@@ -178,7 +183,7 @@ module bpu_fvu #(
   assign a_el  = ra_q + ((op_q == FvuVperm && half_q >= 17'(V)) ? (eoff ^ AW'(half_q)) : eoff);
   assign b_el  = rb_q + eoff;
   assign c_el  = rc_q + eoff;
-  assign t_el  = rt_q + (eoff >> 6);
+  assign t_el  = rt_q + AW'(32'(eoff) >> 6);
   assign rd_el = rd_q + eoff;
 
   // SPM read request for the picked operand
@@ -452,6 +457,20 @@ module bpu_fvu #(
     assign perf_cycles_o = '0;
   end
 
+
+`ifdef FORMAL
+  always_comb begin
+    if (rst_ni) begin
+      // Reduction credits never exceed the FIFO, and the pipeline count is sane.
+      assert (cred_q <= ($bits(cred_q))'(RedFifoDepth));
+      assert (inflight_q <= ($bits(inflight_q))'(Ltot + 3));
+      // Only one source writes the SPM in a cycle.
+      assert (!((o_v && !o_red) && rw_v));
+      // The external port is ignored while an op runs.
+      if (st_q != SIdle) assert (!(spm_we && !(o_v && !o_red) && !rw_v));
+    end
+  end
+`endif
 
 `ifndef SYNTHESIS
   /* verilator lint_off SYNCASYNCNET */

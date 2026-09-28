@@ -1,73 +1,72 @@
 # Compute roadmap: Qwen3.5-2B decode
 
 Scope: the RTL that does the arithmetic for every Qwen3.5-2B decode operation.
-It has to be bit-exact with `bpuref`, run at the F2 size and scale down for tapeout.
-Out of scope: DMA, HBM, descriptor queues, the RISC-V, the host
-(rtl-memory / rtl-control / soc / fpga).
-
-Every milestone ends on **evidence**: tests that pass at every named configuration
-(`fpga`, `asic`, `tiny`), lint clean, and synthesis numbers.
+It is bit-exact with `bpuref`, runs at the F2 size, and scales down for tapeout.
+Out of scope: DMA/HBM, the command source (ISA/RISC-V/host), and the SoC.
+`bpu_compute_top` defines the seam: an operation stream in, weight requests and
+streams from memory.
 
 ## Milestones
 
-| # | Milestone | Qwen3.5 ops unlocked | Exit criteria | Status |
-|---|---|---|---|---|
-| C0 | **Contract + scaffolding**: numerics spec, op spec, `bpuref`, toolchain, config-sweep runner, lint, Yosys check | – | docs v0; reference self-tests; lint clean at all configs | **done** |
-| C1 | **QMV slice** (the first MAC): IEEE fp32 mul/add, int2fp, W4/W8 dot, row-interleaved fp32 accumulation, valid/ready + credits | every projection (one slice) | fp32 units bit-exact vs numpy (~35K vectors each, 3 pipeline configs); slice bit-exact at K = 2048/6144, W4+W8; 1 beat/cycle measured; bugs deliberately injected are caught | **done (simulation)** |
-| C2 | **QMV array + epilogues**: NSlice row striping, argmax epilogue, x double-buffering; freeze layout L0 with rtl-memory | full projection set incl. LM head + greedy sample | 32-slice array bit-exact; head argmax over 248,320 rows matches reference; throughput = NSlice beats/cycle | next |
-| C3 | **SFU**: exp2, log2, rcp, rsqrt as tables + polynomial/Newton; tables/coefficients defined in `bpuref` | prerequisite for all nonlinear ops | bit-exact vs `bpuref`; per-function max-ulp error vs float64 published; ml-models signs off on sigmoid/SiLU/softplus/exp accuracy on real activation ranges | |
-| C4 | **FVU core**: element-wise, conversions, `quant`/`dequant`, canonical reductions, scratchpad, `VLanes` parameter | RMSNorm, residual, SiLU·up, activation quantize, L2 norm, embedding dequant | each op bit-exact at every VLanes; canonical reduction tree proven lane-count independent | |
-| C5 | **FVU 2-D + Qwen blocks**: `matvec`/`vecmat`/`rank1`, `rope`, `conv_step`; operand streaming for big tensors | DeltaNet step, causal conv, gates, gated RMSNorm, decode attention (GQA, online softmax), output gate | one DeltaNet layer and one attention layer of the tiny-Qwen config bit-exact vs `bpuref` layer models | |
-| C6 | **compute_dispatch + counters**: op decode, QMV↔FVU dependency tracking, completion/fault, per-engine busy/stall/beat counters | whole decode step | full tiny-Qwen decode token in RTL simulation matches `bpuref`; a real Qwen3.5-2B layer (vectors from ml-models) matches | |
-| C7 | **Hardening for silicon + FPGA**: OpenLane run at the asic config, VU47P out-of-context timing at 250 MHz, SymbiYosys stream-protocol proofs, gate-level simulation | – | area/timing report per config; formal proofs pass; the tapeout configuration is chosen | |
-
-C3 does not depend on C2, so they can run in parallel if two people are available.
-
-## Qwen3.5-2B coverage tracker
-
-| Op | Engine | Milestone | Status |
+| # | Milestone | Status | Evidence |
 |---|---|---|---|
-| All 10 projection types (K = 2048/6144) | QMV slice | C1 | done (single slice) |
-| LM head 2048 → 248,320 + greedy argmax | QMV array + argmax | C2 | |
-| Activation quantize (a8 + bf16 group scales) | FVU `quant` | C4 | placeholder in `bpuref.quant` |
-| Embedding lookup (tied table) | QMV / FVU `dequant` | C4 | |
-| RMSNorm (hidden), per-head Q/K RMSNorm | FVU + SFU `rsqrt` | C3/C4 | |
-| Residual add, SiLU(gate)·up | FVU + SFU | C3/C4 | |
-| Causal conv1d k=4 + SiLU | FVU `conv_step` | C5 | |
-| q/k L2 norm, β/α gates | FVU + SFU (`exp`, `softplus`, `sigmoid`) | C5 | |
-| DeltaNet recurrent state step | FVU `vecmat` + `rank1` | C5 | |
-| Gated RMSNorm | FVU + SFU | C5 | |
-| Partial RoPE | FVU `rope` | C5 | |
-| Decode attention (GQA, online softmax) | FVU `matvec`/`vecmat` + SFU | C5 | |
-| Attention output gate | FVU + SFU `sigmoid` | C5 | |
+| C0 | Contract + scaffolding: numerics and op specs, `bpuref`, toolchain, config sweeps, lint, synthesis | **done** | docs, `scripts/` |
+| C1 | QMV slice: IEEE fp32 units, W4/W8 × A8 dot, row-interleaved accumulate, credits, flags, counters | **done** | slice tests, formal proofs, fp32 soak, gate-level sim |
+| C2 | QMV array: row striping, in-order merge, argmax (LM head), logical row count | **done** | array tests at 32 / 1 / 3 slices |
+| C3 | SFU: rcp, rsqrt, exp2, exp, log2, bit-exact tables, ≤ 1.44 ulp | **done** | 138M-vector soak, gate-level sim |
+| C4 | FVU core: element-wise, conversions, quantize, canonical reductions, SPM | **done** | FVU tests at 16 / 2 / 4 lanes |
+| C5 | FVU 2-D ops and Qwen blocks: VVECMAT, per-row scalars, VPERM (RoPE), conv, delta rule, attention | **done** | same, plus the compiled Qwen program |
+| C6 | Compute top: operation stream, QMV ↔ SPM gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
+| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, formal (QMV) done; timing and PnR not started |
 
-## Tapeout track (parallel with C2–C7)
+## Qwen3.5-2B coverage
 
-* **Candidate chip ("mini-BPU")**: 1 QMV slice (16 lanes) + FVU (2–4 lanes) +
-  SFU + scratchpad + Wishbone wrapper, running the tiny-Qwen config bit-exactly
-  against the FPGA build.
-* **Early learning run**: the `bpu_qmv_dot` + `bpu_fp32_*` datapath at a tiny
-  configuration on a Tiny Tapeout shuttle, to learn the flow before chipIgnite.
-* **Current data point** (generic Yosys cells from `scripts/synth_yosys.sh`,
-  SRAMs excluded):
+Every decode operation is implemented, runs in the compiled program, and is
+checked bit-exact on the RTL:
+- all ten projection types and the tied LM head with greedy argmax;
+- embedding dequantize and activation quantize;
+- RMSNorm (`1 + w`) and gated RMSNorm (`w`);
+- causal conv + SiLU; q/k l2norm and scaling; the β and α gates (sigmoid, softplus with threshold);
+- the gated delta rule;
+- per-head Q/K RMSNorm, partial RoPE and KV append;
+- GQA attention with softmax; the output gate; SiLU·up; residuals.
 
-  | Block | Cells |
-  |---|---|
-  | slice, asic config (16 lanes) | ~14.3K incl. ~760 flops, plus a 2 KiB activation SRAM |
-  | slice, fpga config (64 lanes) | ~31.9K incl. ~2.8K flops |
-  | `bpu_qmv_dot`, 16 / 64 lanes | ~5.0K / ~20.7K |
-  | `bpu_fp32_mul`, `bpu_fp32_add`, `bpu_int2fp32` | ~4.8K, ~1.5K, ~0.4K |
+## Next, in priority order
 
-  At the asic size, MAC lanes and the fp32 product multiplier cost about the same.
-  **Area optimization, planned for C7:** fuse `int2fp32` and the product multiplier into one
-  int22 × fp32 multiplier. The result is bit-identical, because the conversion is
-  exact, so rounding the exact product once is the same computation.
+1. **Performance** (see [performance.md](performance.md)). The vector unit limits
+   Qwen3.5-2B to about 56 tok/s at short context and 5 at 8K:
+   * attention on QMV with an INT8 KV cache (needs an ml-models accuracy check);
+   * a pipelined reduction merge;
+   * a multi-port SPM;
+   * a fused delta-rule op.
+
+   Together the first three reach roughly 130 / 89 / 83 tok/s (128 / 2K / 8K context).
+2. **Timing closure.**
+   * Out-of-context Vivado runs at 250 MHz for `bpu_qmv_slice` (fpga config) and `bpu_fvu_lane`.
+   * OpenLane 2 on sky130 for the asic config.
+   * The fp32 multiplier's normalize stage and the adder's post-add shift are the known long paths.
+3. **Area for tapeout.**
+   * An `SfuLanes` parameter to share SFUs across FVU lanes.
+   * Fusing int→fp32 with the QMV product multiplier (bit-identical).
+   * Sizing the SPM for the chosen tapeout model.
+4. **FVU formal:** reduce-FIFO credit safety, and sequencer/writeback ordering under all shapes.
+5. **Streaming operands for full-size tensors.** A real 2B model's KV cache and
+   128×128 states per head exceed an on-chip SPM, so the FVU needs a streaming
+   operand port or tiling support in the compiler.
+
+## Tapeout track
+
+* **Candidate:** `bpu_compute_top` at the asic configuration: 1 QMV slice × 16
+  lanes and a 2-lane FVU, about 80K generic cells plus SRAMs, running the tiny
+  model bit-exact against the FPGA build and the reference.
+* **Early learning run:** `bpu_qmv_dot` + `bpu_fp32_*` at a tiny configuration on a
+  Tiny Tapeout shuttle, to learn the flow first.
 
 ## Needed from other teams
 
-| From | What | Needed by |
+| From | What | Why |
 |---|---|---|
-| architecture + ml-models | W4A8 vs W4A16 decision; bf16 vs E8M0 scales | before freezing C1 (the RTL assumes W4A8 + bf16) |
-| rtl-memory + ml-compiler | agreement on layout L0 (or an adapter spec) | C2 |
-| ml-models | activation-quantize rule; SFU accuracy targets; confirmed Qwen3.5 tensor names/norm conventions; a tiny-Qwen config + per-layer golden vectors | C3–C6 |
-| architecture / rtl-control | command descriptor encoding and completion protocol | C6 |
+| architecture + ml-models | confirm W4A8 + bf16 scales; KV precision (INT8 enables the biggest speedup) | numerics freeze |
+| ml-models | real-checkpoint quality of these numerics (perplexity) | accuracy sign-off |
+| rtl-memory | agreement on layout L0 and the `wreq_*` protocol | weight streaming |
+| architecture / rtl-control | who produces the operation stream (compiler list, RISC-V, list-walker) | integration |

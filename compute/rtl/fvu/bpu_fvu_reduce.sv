@@ -113,7 +113,7 @@ module bpu_fvu_reduce #(
   logic [31:0]      cur_q, mkey_q, mval_q;
   logic [LvW-1:0]   lvl_q;
   logic [LMax-1:0]  occ_q;
-  logic [31:0]      stack_q [LMax];
+  logic [LMax-1:0][31:0] stack_q;         // packed: registers, never an SRAM
   logic             last_q;
   logic [AW-1:0]    dest_q;
   localparam int unsigned CntW = (La > 0) ? $clog2(La + 1) : 1;
@@ -202,6 +202,15 @@ module bpu_fvu_reduce #(
   end
 
   assign busy_o = (tree_cnt_q != '0) || f_valid || (st_q != MIdle);
+
+`ifdef FORMAL
+  always_comb begin
+    if (rst_ni) begin
+      assert (!(t_valid && !fifo_ready));           // credits keep the FIFO from overflowing
+      assert (lvl_q <= LvW'(LMax));
+    end
+  end
+`endif
 
 `ifdef SYNTHESIS
   logic unused_fifo_ready;

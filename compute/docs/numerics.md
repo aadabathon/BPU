@@ -1,141 +1,137 @@
-# Compute numerics contract (v0 draft)
+# Compute numerics contract (v1)
 
 This is the arithmetic contract for every compute engine. The Python reference
-model in `compute/model/bpuref` implements it, the RTL has to match that model
-bit for bit, and every test compares the two.
-
-Status: **v0 draft**. Anything marked *open* waits on a decision from another
-team (see [Open decisions](#open-decisions)). Every change needs a matching
-change to `bpuref` and to the tests.
+(`compute/model/bpuref`) implements it, and the RTL matches that reference bit for
+bit at every hardware configuration. Tests compare every bit (NaN payloads
+excepted), never "within tolerance". Accuracy relative to the real model is a
+separate, measured question; see [Accuracy](#accuracy-against-the-model).
 
 ## Principle: parameterize throughput, never numerics
 
-The same RTL is built at very different sizes:
+| Configuration | Purpose | QMV | FVU |
+|---|---|---|---|
+| `fpga` | AWS F2 (VU47P + HBM) | 32 slices × 64 lanes, row interleave 4 | 16 lanes, deep pipelines |
+| `asic` | tapeout candidate | 1 slice × 16 lanes | 2 lanes, shallow pipelines |
+| `tiny` | corner-case regressions | 3 slices × 4 lanes | 4 lanes, every unit combinational |
 
-| Configuration | Purpose | Example |
-|---|---|---|
-| `fpga` | AWS F2 (VU47P + HBM) | 64 MAC lanes/slice, 4 interleaved rows, 250 MHz pipelining |
-| `asic` | tapeout candidate | 16 lanes, 1 row, shallow pipelines |
-| `tiny` | fast regressions, corner cases | 4 lanes, fully combinational units |
+**For the same inputs, every configuration produces bit-identical results.** Three rules make that hold:
 
-**For the same inputs, every configuration produces bit-identical outputs.**
-One set of golden vectors therefore covers FPGA, silicon and simulation. To
-keep that property:
-
-1. Anything that affects results is a **spec constant**, not a module parameter:
-   formats, group size, rounding, accumulation order and special-function
-   algorithms. These live in `bpu_compute_pkg` and `bpuref`.
-2. Module parameters only change **how fast** results are produced: lane counts,
-   interleave factors, buffer depths and pipeline registers.
-3. Datapaths assign lanes to *independent* outputs, or to integer sums (which
-   are exact in any order). Floating-point accumulation for a given output is
-   always sequential, in a fixed order.
+1. Anything that affects results is a **spec constant**: formats, group size,
+   rounding, accumulation order, special-function tables. Module parameters only
+   change how fast results come out.
+2. Lanes map to *independent* outputs or to *integer* sums, which are exact in any order.
+3. Floating-point accumulation into one output is sequential in a fixed order, or
+   follows one canonical tree that every lane count reproduces exactly.
 
 ## Number formats
 
 | Name | Encoding | Used for |
 |---|---|---|
-| `fp32` | IEEE-754 binary32 | accumulators, vector-engine math, recurrent state |
-| `bf16` | top 16 bits of binary32 | quantization scales; KV cache (*open*) |
-| `w4` | signed two's-complement int4, range [-8, 7] | weights |
-| `w8` | signed two's-complement int8, range [-128, 127] | sensitive weights (e.g. LM head, *open*); INT8 KV (*open*) |
-| `a8` | signed int8, hardware range [-128, 127]; quantizer emits [-127, 127] | activations entering the QMV engine |
+| `fp32` | IEEE-754 binary32 | all vector math, accumulators, recurrent state, KV cache (v1) |
+| `bf16` | top 16 bits of binary32 | quantization scales |
+| `w4` / `w8` | signed int4 [-8, 7] / int8 [-128, 127] | weights |
+| `a8` | signed int8; the quantizer emits [-127, 127] | activations entering QMV |
 
-### FP32 arithmetic rules
+### FP32 arithmetic (multiply, add, convert)
 
-* Round to nearest, ties to even (RNE). No other rounding modes.
-* **Subnormals are fully supported** on both input and output (no flush-to-zero).
-  That makes numpy `float32` a bit-exact reference with no emulation layer.
-* Every NaN result is the canonical quiet NaN `0x7FC00000`. Payloads are not
-  propagated. Tests only require "NaN in, NaN out".
-* No exception flags and no traps.
-* Signed zeros follow IEEE rules: `x + (-x) = +0`, `(-0) + (-0) = -0`, and the
-  sign of a product is `sa ^ sb`.
-* Add and multiply are separate operations, each rounded. There is no fused
-  multiply-add in v0: a separately rounded mul + add can be vectorized in
-  numpy exactly, and an FMA cannot.
+* Round to nearest, ties to even. **Subnormals fully supported** (no flush), so
+  numpy `float32` is the bit-exact reference.
+* NaN results are always the canonical quiet NaN `0x7FC00000`.
+* Signed zeros follow IEEE rules (`x + (-x) = +0`, `(-0) + (-0) = -0`).
+* No fused multiply-add: every product and sum is rounded separately.
 
-### bf16 to fp32 conversion
-
-Exact: `fp32 = bf16 << 16`. When the compute engines produce bf16 values
-(activation scales, and KV if bf16), they round from fp32 to bf16 with RNE.
+Verified by 100M random vectors per unit against the host FPU, all 2^32 bf16×bf16
+products, and all 2^22 int22→fp32 conversions (`scripts/soak_fp32.sh`).
 
 ## QMV: quantized matrix-vector product
 
-Computes `y[N] = W[N,K] · x[K]`, where `W` is `w4` or `w8` with one bf16 scale
-per (row, group), and `x` is `a8` with one bf16 scale per group.
+`y[n] = Σ over groups g (increasing), of f32(isum[n,g]) · (f32(sw[n,g]) · f32(sx[g]))`, where:
 
-* Group size `G = 64` along K (`bpu_compute_pkg::QmvGroup`). K must be a
-  multiple of 64. Every Qwen3.5-2B reduction length (2048, 6144) already is.
-* **Exact semantics** for each row `n`, with `KG = K / 64` groups:
+* `isum` is the exact integer dot product of the group's 64 weights and 64 activations;
+* `acc` starts at +0.0, and every product and add is fp32 RNE.
 
-```
-acc = +0.0                                     # fp32
-for g in 0 .. KG-1:                            # strictly increasing g
-    isum = sum_{k in group g} W[n,k] * x[k]    # exact integer, |isum| <= 2^20
-    sc   = f32(sw[n,g]) * f32(sx[g])           # fp32 mul (exact unless it over/underflows)
-    p    = f32(isum) * sc                      # int -> fp32 is exact (|isum| < 2^24), mul rounds RNE
-    acc  = acc + p                             # fp32 add, RNE
-y[n] = acc
-```
+Row interleave `R` hides the adder latency without changing the order:
+`R · 64/Lanes ≥ AddLatency + 1`.
 
-* The integer group sum is exact, so the MAC lane count and adder-tree shape
-  cannot change results.
-* The fp32 part runs once per group per row, always in increasing `g`.
-* Hardware may process several rows at once (row interleave `R`) and spread
-  rows across slices; neither changes the per-row order.
+**Argmax** (greedy sampling on the LM head): the largest value under a total-order
+key, with `-inf < … < -0 < +0 < … < +inf` and NaN ranked lowest; ties go to the
+smallest row index. Rows beyond the logical row count (padding up to whole row
+blocks) never win.
 
-### Why row interleave exists
+## FVU: fp32 vector unit
 
-The accumulation above is a loop-carried dependency through a pipelined fp32
-adder. When a slice finishes one group per cycle (64 lanes, W4), updates to
-the same row's accumulator must be at least `AddLatency + 1` cycles apart. The
-slice therefore interleaves `R` rows: the weight stream visits group `g` for
-rows `r = 0..R-1`, then group `g+1`, and so on. That meets the constraint with
-no extra accumulators and no change to the arithmetic. Required:
-`R * (64 / Lanes) >= AddLatency + 1`.
+Ops are 2-D (rows × cols) with per-row strided operands; see
+[engine-ops.md](engine-ops.md) for the op list.
 
-## Vector engine (FVU): planned rules
+* **Element-wise** ops are the fp32 rules above per element. `VSUB` is `a + (-b)`;
+  `VAXPY` is `(s·a) + b`; `VMULADD` is `(a·b) + c`.
+* **Sums** (`RSUM`, `RDOT`): pad the row with +0 to `P = max(64, next_pow2(cols))`,
+  then add adjacent pairs level by level. The lane adder tree plus the merge stack
+  reproduce exactly this tree at any lane count. `RDOT` rounds each product first.
+* **Max** (`RMAX`, `RAMAX`): total-order key as above; an all-NaN row gives canonical NaN.
+* **`VVECMAT`** `d[j] = Σ_r s[r]·a[r,j]`: sequential over rows, starting from +0.
+* **`VSEL`** `a > s ? b : c`: IEEE greater-than (false when either is NaN; `+0 == -0`).
+* **`VRBF16`**: round to bf16 (nearest even); NaN becomes canonical.
+* **`VQCLAMP`**: round half to even to an integer, clamp to ±127, NaN → 0, and zero is +0.
+* **Hazards**: an op's writes may alias its reads only exactly in place (same element
+  at the same row/column position). `bpuref.fvu.validate` enforces this, and every
+  compiled program is checked.
 
-Not implemented yet. These rules are recorded now so they don't get decided
-by accident later.
+### Activation quantization (the rule, now fixed)
 
-* All arithmetic in fp32, following the rules above.
-* Element-wise ops are trivially identical across lane counts.
-* **2-D ops** (`M·x`, `xᵀ·M`, rank-1 update): lanes map to output elements, and
-  each output accumulates sequentially along the reduction index. The result
-  is identical at any lane count.
-* **Full-vector sums** (RMSNorm mean of squares, L2 norm, softmax denominators)
-  use one canonical order: a pairwise binary tree over 64-element blocks
-  (zero-padded), then sequential accumulation across blocks. Any power-of-two
-  lane count ≤ 64 can reproduce this tree exactly with a small partial-sum stack.
-* **Max/argmax** is order-independent except for ties: the smallest index wins.
+For each 64-element group of `x`:
+1. `amax = max|x|` (`RAMAX`).
+2. `s = bf16(amax · fp32(1/127))` (`VMULS`, `VRBF16`).
+3. `inv = rcp(s)` (SFU).
+4. `code = VQCLAMP(x · inv)`.
 
-## Special-function unit (SFU): planned rules
+If `amax = 0`, then `s = 0` and `inv = +inf`; `0·inf = NaN`, and `VQCLAMP` turns NaN
+into 0, so an all-zero group gets all-zero codes. The codes and bf16 scales are
+exactly what the QMV engine consumes.
 
-Four primitives cover all of Qwen3.5: `exp2`, `log2`, `rcp` (1/x) and `rsqrt`.
-Every other function is a fixed composition of these plus fp32 add/mul:
+## SFU: special functions
 
-| Function | Composition (fixed; the order is part of the spec) |
+Five functions: `rcp`, `rsqrt`, `exp2`, `exp`, `log2`. Each is integer range
+reduction, a **128-segment quadratic from a frozen coefficient table**, and
+fixed-point packing. The tables are the spec (`bpuref/sfu_tables_data.py`); the
+RTL ROM is generated from them and CI checks that they match.
+
+* Subnormal inputs read as zero (DAZ); results below the normal range flush to zero (FTZ).
+  Neither occurs in Qwen3.5's uses.
+* `exp` multiplies by log2(e) in fixed point (Q·24 × Q·30) before the exp2 core,
+  so large arguments keep accuracy.
+* `log2` computes `e' + t·h(t)` with `t ∈ [-0.25, 0.5)`, so results near 1 keep
+  full *relative* precision on both sides.
+* Compositions used by programs: `sigmoid = rcp(1 + exp(-x))`, `silu = x·sigmoid(x)`,
+  `softplus = x > 20 ? x : ln2·log2(1 + exp(x))`.
+
+Measured error against float64 (random inputs over each function's range, plus
+dense sweeps):
+
+| Function | Max error |
 |---|---|
-| `exp(x)` | `exp2(x * log2(e))` |
-| `sigmoid(x)` | `rcp(1 + exp(-x))` |
-| `silu(x)` | `x * sigmoid(x)` |
-| `softplus(x)` | `x` if `x > 20`, else `log2(1 + exp(x)) * ln(2)` |
-| RMSNorm scale | `rsqrt(mean(x²) + eps)` |
+| rcp | 0.75 ulp |
+| rsqrt | 0.58 ulp |
+| exp2 | 1.19 ulp |
+| exp | 1.44 ulp |
+| log2 (incl. x → 1 from either side) | 0.52 ulp |
 
-Each primitive is table-plus-polynomial or seed-plus-Newton, with its table
-contents and coefficients defined *in `bpuref`*. That keeps the SFU bit-exact,
-not just "within tolerance". Error bounds (in ulp, compared against float64)
-are measured and published per function for ml-models to sign off.
+## Accuracy against the model
+
+* The float64 reference of Qwen3.5 (`bpuref.qwen.Float64Qwen`) matches Hugging Face
+  transformers 5.17 to about 2e-7 relative over multi-token decode. HF computes
+  norms and the DeltaNet core in fp32, which sets that floor.
+* The compiled BPU program (W4 weights, A8 activations, fp32 vector math, SFU)
+  tracks the float64 model run with the same dequantized weights at logit cosine
+  > 0.9997 on a random-weight tiny model.
+* **Still open:** whole-model quality of the chosen quantization on the real 2B
+  checkpoint (perplexity, downstream tasks). That is an ml-models measurement.
 
 ## Open decisions
 
-| Decision | Current assumption | Blocks | Owner |
-|---|---|---|---|
-| Activation precision (W4A8 vs W4A16) | W4A8 blockwise | QMV datapath (built for A8) | architecture + ml-models |
-| Scale format (bf16 vs power-of-two E8M0) | bf16 | QMV scale path (one multiplier vs an exponent add) | architecture |
-| Weight format per tensor (which tensors get w8) | w4 everywhere, w8 supported | nothing (QMV supports both) | ml-models |
-| KV cache precision (bf16 vs int8) | bf16 | whether attention can run on QMV later | architecture |
-| Activation quantization rule (scale rounding, clamp) | absmax/127 → bf16, round codes RNE, clamp ±127 (placeholder) | FVU quantize op | compute + ml-models |
-| Norm weight convention (`w` vs `1 + w`) | confirm against the pinned `modeling_qwen3_5.py` | FVU RMSNorm sequence | ml-models |
+| Decision | v1 choice | Notes |
+|---|---|---|
+| Activation precision | W4A8, 64-element groups | QMV also supports W8 weights |
+| Scale format | bf16 | E8M0 would turn the scale multiply into an exponent add |
+| Which tensors use W8 | none | per-tensor choice, carried in each QMV op |
+| KV cache precision | fp32 in the SPM | bf16 storage = `VRBF16` + the top 16 bits; INT8 would let attention run on QMV (see performance.md) |

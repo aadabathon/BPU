@@ -1,0 +1,78 @@
+# Compute engines: lint, reference model, RTL tests at every configuration,
+# formal proofs, soak tests and synthesis. The toolchain is pinned to the exact
+# OSS CAD Suite build the results in compute/docs were produced with.
+name: compute
+
+on:
+  push:
+    paths: ["compute/**", ".github/workflows/compute.yml"]
+  pull_request:
+    paths: ["compute/**", ".github/workflows/compute.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          version: "2026-09-27"
+          python-override: true          # use the suite's Python (it ships cocotb)
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Python dependencies
+        run: python3 -m pip install numpy
+
+      - name: Lint (Verilator -Wall, every top at every configuration)
+        run: compute/scripts/lint.sh
+
+      - name: SFU ROM matches the frozen tables
+        working-directory: compute/model
+        run: python3 -m bpuref.gen_sfu_rom --check
+
+      - name: Reference model and RTL tests
+        working-directory: compute
+        env:
+          BPU_BUILD_ROOT: ${{ runner.temp }}/bpu_build
+        run: python3 -m pytest -q
+
+      - name: Formal (SymbiYosys)
+        working-directory: compute/formal
+        run: |
+          sby -f qmv_slice.sby
+          sby -f qmv_dot.sby
+
+      - name: Soak (fp32 units vs host FPU, SFU vs reference)
+        env:
+          BPU_BUILD_ROOT: ${{ runner.temp }}/bpu_build
+        run: |
+          compute/scripts/soak_fp32.sh 20000000
+          compute/scripts/soak_sfu.sh
+
+      - name: Synthesis (Yosys, generic cells)
+        env:
+          BPU_SYNTH_OUT: ${{ runner.temp }}/synth
+        run: compute/scripts/synth_yosys.sh slice-asic array-asic sfu
+
+  gates:
+    # Gate-level simulation of synthesized netlists (slow): manual runs only.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          version: "2026-09-27"
+          python-override: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: python3 -m pip install numpy
+      - name: Gate-level simulation
+        working-directory: compute
+        env:
+          BPU_GATES: "1"
+          BPU_BUILD_ROOT: ${{ runner.temp }}/bpu_build
+        run: python3 -m pytest -q tb/test_gates.py

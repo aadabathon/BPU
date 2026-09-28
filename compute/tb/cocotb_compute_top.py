@@ -8,6 +8,7 @@ import os
 import cocotb
 import numpy as np
 from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.utils import get_sim_time
 
 import busmodels as bm
 from bpuref import fvu as F
@@ -138,10 +139,11 @@ async def tiny_qwen_decode(dut):
             await host.write(addr, vals)
         ops = comp.step_program(pos)
         expect = ref.step(tok)
-        start = cocotb.utils.get_sim_time("ns") if hasattr(cocotb, "utils") else 0
+        start = get_sim_time("ns")
         for op in ops:
             await issue(dut, op, qw, wid)
         await bm.wait_high(dut, dut.cmd_ready_o)
+        cycles = int((get_sim_time("ns") - start) // 10)
         for _ in range(4):
             await RisingEdge(dut.clk_i)
         assert dut.err_o.value == 0, "an operation was rejected"
@@ -156,4 +158,5 @@ async def tiny_qwen_decode(dut):
         assert rtl_tok == expect, f"step {step}: token {rtl_tok} != {expect}"
         n_q = sum(isinstance(o, QmvOp) for o in ops)
         dut._log.info(f"[{CFG.name}] step {step}: token {tok} -> {rtl_tok}; "
-                      f"{len(ops)} ops ({n_q} QMV) bit-exact, whole SPM matches")
+                      f"{len(ops)} ops ({n_q} QMV) bit-exact, whole SPM matches; "
+                      f"{cycles} cycles for the op stream")
