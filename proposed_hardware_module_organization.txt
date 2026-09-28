@@ -1,0 +1,30 @@
+qwen_compute_subsystem
+├── compute_dispatch              ← commands from rtl-control
+│   ├── engine_select
+│   └── completion / fault reporting
+├── matrix_engine
+│   ├── tile_controller
+│   ├── operand staging buffers
+│   ├── weight unpack + scale path
+│   ├── MAC array                 ← your first MAC lives here
+│   ├── partial-sum storage
+│   └── cast / output writer
+├── vector_engine
+│   ├── elementwise add / multiply
+│   ├── reduction + RMSNorm
+│   ├── sigmoid / SiLU
+│   ├── RoPE
+│   └── embedding / gather path
+├── attention_engine
+│   ├── QK tile computation       → matrix_engine
+│   ├── online softmax state
+│   ├── weighted-V computation    → matrix_engine
+│   └── output gate
+├── deltanet_engine
+│   ├── causal convolution
+│   ├── gate + decay calculation
+│   ├── recurrent-state update
+│   └── state readout
+└── local tensor interface
+    ├── requests to shared SRAM / rtl-memory
+    └── tensor layout, strides, and transfer status
