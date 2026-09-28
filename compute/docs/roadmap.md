@@ -88,8 +88,12 @@ checked bit-exact on the RTL:
   lanes and a 2-lane FVU with one shared SFU. That is about 0.43 mm² of sky130
   logic (pre-layout, typical corner) plus SRAMs, running the tiny model bit-exact
   against the FPGA build and the reference.
-* **Early learning run:** `bpu_qmv_dot` + `bpu_fp32_*` at a tiny configuration on a
-  Tiny Tapeout shuttle, to learn the flow first.
+* **Early learning run (ready to submit):** `compute/tapeout/tt` wraps the
+  unchanged fp32 adder and multiplier for a Tiny Tapeout shuttle, behind a
+  byte-wide host protocol. It is 0.052 mm² of sky130 cells, so a 4x2-tile slot.
+  A pin-level test checks it bit-exact, and `assemble.sh` builds the submission
+  tree. It teaches the flow and checks the arithmetic every BPU datapath uses,
+  on real silicon.
 
 ## Needed from other teams
 

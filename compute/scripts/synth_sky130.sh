@@ -17,11 +17,12 @@ mapfile -t files < <(grep -v '^//' compute.f | grep -v '^[[:space:]]*$')
 out="${BPU_SYNTH_OUT:-$here/../synth_out}/sky130"
 mkdir -p "$out"
 
-declare -A top params
+declare -A top params extra
 top[slice]=bpu_qmv_slice;  params[slice]="-GLanes=16 -GRowInterleave=1 -GMaxK=2048 -GTreeRegEvery=0 -GMulPipe=3'b010 -GAddPipe=3'b010"
 top[sfu]=bpu_sfu;          params[sfu]="-GPipeMask=5'b01010"
 top[fvu]=bpu_fvu;          params[fvu]="-GVLanes=2 -GSfuLanes=1 -GSpmWords=1024 -GMulPipe=3'b010 -GAddPipe=3'b010 -GSfuPipe=5'b01010"
 top[top]=bpu_compute_top;  params[top]="-GMaxK=256 -GSpmWords=1024 -GFSfuLanes=1"
+top[tt]=tt_um_bpu_fp32;    params[tt]=""; extra[tt]="../tapeout/tt/src/tt_um_bpu_fp32.sv"   # Tiny Tapeout run
 
 targets=("$@")
 [ ${#targets[@]} -eq 0 ] && targets=(slice sfu fvu top)
@@ -29,7 +30,7 @@ targets=("$@")
 printf "%-6s %-16s %14s %10s %12s\n" target module "area (um^2)" cells "delay (ps)"
 for t in "${targets[@]}"; do
   yosys -l "$out/$t.log" -p "
-    read_slang -DSYNTHESIS --top ${top[$t]} ${params[$t]} ${files[*]}
+    read_slang -DSYNTHESIS --top ${top[$t]} ${params[$t]} ${files[*]} ${extra[$t]:-}
     synth -top ${top[$t]} -flatten -run :fine
     memory -nomap
     opt -full

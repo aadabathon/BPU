@@ -36,6 +36,7 @@ model/tests/        reference self-tests (incl. Hugging Face cross-check when to
 tb/                 cocotb testbenches, pytest runners (RTL and gate-level), soak harnesses
 formal/             SymbiYosys proofs (QMV slice protocol, dot-product equivalence, FVU control)
 scripts/            lint, synthesis, soak
+tapeout/tt/         Tiny Tapeout learning run: the fp32 units behind a byte-wide protocol
 ```
 
 ## Running

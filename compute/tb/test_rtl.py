@@ -25,13 +25,14 @@ def rtl_sources() -> list[Path]:
     return [RTL / ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("//")]
 
 
-def run(top: str, test_module: str, parameters: dict, tag: str, env: dict) -> None:
+def run(top: str, test_module: str, parameters: dict, tag: str, env: dict,
+        extra_sources: list[Path] = ()) -> None:
     build_root = Path(os.environ.get("BPU_BUILD_ROOT", COMPUTE / "sim_build")).expanduser()
     build_dir = build_root / f"{top}-{tag}"
     build_args = ["--x-assign", "unique", "--x-initial", "unique"] if SIM == "verilator" else []
     runner = get_runner(SIM)
     runner.build(
-        sources=rtl_sources(),
+        sources=rtl_sources() + list(extra_sources),
         hdl_toplevel=top,
         parameters=parameters,
         build_args=build_args,
@@ -80,6 +81,12 @@ def test_fvu_reduce(case: str) -> None:
     run("bpu_fvu_reduce", "cocotb_fvu_reduce",
         {"Lanes": lanes, "AW": 16, "AddPipe": f"3'b{pipe:03b}", "FifoDepth": fifo}, case,
         {"BPU_RED_LANES": str(lanes), "BPU_RED_FIFO": str(fifo), "BPU_RED_ADDPIPE": str(pipe)})
+
+
+def test_tt_fp32() -> None:
+    """The Tiny Tapeout learning-run wrapper, through its pins."""
+    run("tt_um_bpu_fp32", "cocotb_tt_fp32", {}, "tt", {},
+        [COMPUTE / "tapeout" / "tt" / "src" / "tt_um_bpu_fp32.sv"])
 
 
 @pytest.mark.parametrize("cfg", list(QMV_SLICE_CONFIGS))

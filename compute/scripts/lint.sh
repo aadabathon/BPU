@@ -43,6 +43,7 @@ lint bpu_fvu -GVLanes=64 -GSpmWords=256 -GSfuLanes=16 -GSpmReadPorts=3 -GRedFifo
 lint bpu_fvu_reduce -GLanes=1 "-GAddPipe=3'b101"                                     # reduction edge shapes
 lint bpu_fvu_reduce -GLanes=16 "-GAddPipe=3'b000"
 
+lint tt_um_bpu_fp32 ../tapeout/tt/src/tt_um_bpu_fp32.sv                               # Tiny Tapeout run
 lint bpu_compute_top -GFSfuLanes=1                                                    # asic-like defaults
 lint bpu_compute_top -GNSlice=3 -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GVLanes=4 -GSpmWords=16384 -GFSfuLanes=2 -GFSpmPorts=2      -GQProdReg=0 -GQTreeRegEvery=1 -GQI2fReg=0 "-GQMulPipe=3'b000" "-GQAddPipe=3'b000"      "-GFMulPipe=3'b000" "-GFAddPipe=3'b000" "-GFSfuPipe=5'b00000"                     # tiny
 lint bpu_compute_top -GNSlice=32 -GLanes=64 -GRowInterleave=4 -GMaxK=6144 -GVLanes=16 -GSpmWords=8192 -GFSfuLanes=4 -GFSpmPorts=3      -GQProdReg=1 -GQTreeRegEvery=2 "-GQMulPipe=3'b111" "-GQAddPipe=3'b111"      "-GFMulPipe=3'b111" "-GFAddPipe=3'b111" "-GFSfuPipe=5'b11111"                     # fpga
