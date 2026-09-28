@@ -69,6 +69,19 @@ def test_fvu(cfg: str) -> None:
         {"BPU_FVU_CFG": cfg, "BPU_SPM_ELEMS": str(spm)})
 
 
+# (lanes, AddPipe, FIFO depth): the three configurations' shapes plus a 1-lane edge case
+FVU_REDUCE_CASES = {"l16_p111_f24": (16, 0b111, 24), "l2_p010_f8": (2, 0b010, 8),
+                    "l4_p000_f2": (4, 0b000, 2), "l1_p101_f4": (1, 0b101, 4)}
+
+
+@pytest.mark.parametrize("case", list(FVU_REDUCE_CASES))
+def test_fvu_reduce(case: str) -> None:
+    lanes, pipe, fifo = FVU_REDUCE_CASES[case]
+    run("bpu_fvu_reduce", "cocotb_fvu_reduce",
+        {"Lanes": lanes, "AW": 16, "AddPipe": f"3'b{pipe:03b}", "FifoDepth": fifo}, case,
+        {"BPU_RED_LANES": str(lanes), "BPU_RED_FIFO": str(fifo), "BPU_RED_ADDPIPE": str(pipe)})
+
+
 @pytest.mark.parametrize("cfg", list(QMV_SLICE_CONFIGS))
 def test_qmv_slice(cfg: str) -> None:
     run("bpu_qmv_slice", "cocotb_qmv_slice", QMV_SLICE_CONFIGS[cfg].hdl_parameters(), cfg,

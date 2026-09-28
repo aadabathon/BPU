@@ -1,7 +1,7 @@
 """Cycle model of bpu_compute_top running a compiled program.
 
 Counts cycles from the RTL's actual issue rules (per-item SPM reads, reduction
-merge rate, VVECMAT row spacing, QMV gearbox, beats per slice) rather than from
+merge rate and credit loop, VVECMAT row spacing, QMV gearbox, beats per slice) rather than from
 peak rates. It is calibrated against the measured op-stream cycles of the
 tiny-Qwen RTL test (compute_top), then used to project Qwen3.5-2B.
 
@@ -28,16 +28,17 @@ def _pow2(x: int) -> int:
 
 class CycleModel:
     OP_OVERHEAD = 3        # dispatcher + issue handshake between operations
+    MERGE_PER_NODE = 1.08  # pipelined reduction merge, measured (tb/cocotb_fvu_reduce.py)
 
-    def __init__(self, cfg: TopConfig, beat_rate: float = 1.0, spm_ports: int = 1,
+    def __init__(self, cfg: TopConfig, beat_rate: float = 1.0, spm_ports: int | None = None,
                  merge_per_node: float | None = None, attn_on_qmv: bool = False):
         """Knobs beyond the current RTL (all default to it): spm_ports = operand reads
-        per cycle; merge_per_node = reduction merge cycles per word node (None = the RTL's
-        3 + AddLatency); attn_on_qmv = attention K.q and p^T V run on the QMV engine at its
+        per cycle (None = the configuration's); merge_per_node = reduction merge cycles per word node (None = the RTL's
+        pipelined merge); attn_on_qmv = attention K.q and p^T V run on the QMV engine at its
         MAC rate (i.e. an INT8 KV cache streamed like weights)."""
         self.cfg = cfg
         self.beat_rate = beat_rate            # weight beats per cycle per slice (1.0 = HBM keeps up)
-        self.spm_ports = spm_ports
+        self.spm_ports = spm_ports if spm_ports is not None else cfg.fvu.spm_ports
         self.merge_per_node = merge_per_node
         self.attn_on_qmv = attn_on_qmv
         f, q = cfg.fvu, cfg.qmv
@@ -70,11 +71,18 @@ class CycleModel:
             if op.op == F.VVECMAT and r > 0:
                 row = max(row, self.vm_period)
             cycles += row
-        if red and op.op in (F.RSUM, F.RDOT):
-            # Merge FSM: pop + push + one merge of (La + 1) cycles per word node.
-            per_node = self.merge_per_node if self.merge_per_node is not None else 3 + self.la
+        lt = (V.bit_length() - 1) * self.la            # lane adder tree
+        if red:
+            # Every word takes a FIFO credit for one loop: issue -> lanes -> tree -> pop -> credit.
+            per_node = (self.ltot + lt + 4) / self.cfg.fvu.red_fifo
+            if op.op in (F.RSUM, F.RDOT):
+                # Pipelined merge: about one word node per cycle (returning nodes win the adder).
+                per_node = max(per_node, self.merge_per_node if self.merge_per_node is not None
+                               else self.MERGE_PER_NODE)
             cycles = max(cycles, int(op.rows * wrow * per_node))
-        drain = 2 + self.ltot + (1 + (V.bit_length() - 1) * self.la + 3 if red else 1)
+        drain = 2 + self.ltot + (1 + lt + 3 if red else 1)
+        if red and op.op in (F.RSUM, F.RDOT):
+            drain += (wrow.bit_length() - 1) * max(self.la, 1) + 1   # the last row's merge levels
         return cycles + drain + self.OP_OVERHEAD
 
     # -- QMV ----------------------------------------------------------------
@@ -136,11 +144,11 @@ if __name__ == "__main__":
     for name, top in TOP_CONFIGS.items():
         m = CycleModel(top, beat_rate=0.9).program(ops, qw)
         print(f"  {name:5s}", {k: int(v) for k, v in m.items()})
-    print("Qwen3.5-2B at the fpga config, 250 MHz, tokens/s (cumulative improvements):")
-    scen = [("current RTL", {}),
-            ("+ 3-port SPM", {"spm_ports": 3}),
-            ("+ pipelined merge", {"spm_ports": 3, "merge_per_node": 1}),
-            ("+ attention on QMV", {"spm_ports": 3, "merge_per_node": 1, "attn_on_qmv": True})]
+    print("Qwen3.5-2B at the fpga config, 250 MHz, tokens/s:")
+    scen = [("1 port, merge FSM", {"spm_ports": 1, "merge_per_node": 3 + CycleModel(TOP_CONFIGS["fpga"]).la}),
+            ("1 port", {"spm_ports": 1}),
+            ("current RTL (3 ports)", {}),
+            ("+ attention on QMV", {"attn_on_qmv": True})]
     print(f"  {'':22s}" + "".join(f"{c:>10d}" for c in (128, 2048, 8192)))
     for label, knobs in scen:
         row = [projection(QWEN35_2B, TOP_CONFIGS["fpga"], c, **knobs)["tokens_per_s"] for c in (128, 2048, 8192)]

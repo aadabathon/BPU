@@ -44,6 +44,7 @@ jobs:
         run: |
           sby -f qmv_slice.sby
           sby -f qmv_dot.sby
+          sby -f fvu.sby bmc bmc_p2 cover   # the unbounded FVU proof (prove) takes ~1 h: run locally
 
       - name: Soak (fp32 units vs host FPU, SFU vs reference)
         env:

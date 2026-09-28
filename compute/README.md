@@ -34,7 +34,7 @@ rtl/                SystemVerilog (compile order: rtl/compute.f)
 model/bpuref/       bit-exact reference: fp, qmv, sfu, fvu, qwen (model + compiler), perf, configs
 model/tests/        reference self-tests (incl. Hugging Face cross-check when torch is present)
 tb/                 cocotb testbenches, pytest runners (RTL and gate-level), soak harnesses
-formal/             SymbiYosys proofs (QMV slice protocol, dot-product equivalence)
+formal/             SymbiYosys proofs (QMV slice protocol, dot-product equivalence, FVU control)
 scripts/            lint, synthesis, soak
 ```
 

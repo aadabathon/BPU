@@ -28,6 +28,8 @@ TARGETS = {
                   {"VLanes": 2, "SfuLanes": 1, "SpmWords": 256, "MulPipe": "3'b000", "AddPipe": "3'b000",
                    "SfuPipe": "5'b00000", "RedFifoDepth": 2},
                   "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_SPM_ELEMS": "512"}),
+    "fvu_reduce": ("bpu_fvu_reduce", {"Lanes": 2, "AW": 16, "AddPipe": "3'b010", "FifoDepth": 8},
+                   "cocotb_fvu_reduce", {"BPU_RED_LANES": "2", "BPU_RED_FIFO": "8", "BPU_RED_ADDPIPE": "2"}),
 }
 
 

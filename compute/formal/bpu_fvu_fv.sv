@@ -4,7 +4,8 @@
 // in bpu_fvu / bpu_fvu_reduce (`ifdef FORMAL) must hold for any data.
 module bpu_fvu_fv #(
   parameter int unsigned VLanes   = 2,
-  parameter int unsigned SpmWords = 16
+  parameter int unsigned SpmWords = 16,
+  parameter int unsigned SpmReadPorts = 1
 ) (
   input logic                                clk_i,
   input logic                                rst_ni,
@@ -29,7 +30,7 @@ module bpu_fvu_fv #(
 
   bpu_fvu #(
     .VLanes(VLanes), .SpmWords(SpmWords), .MulPipe(3'b001), .AddPipe(3'b001),
-    .SfuPipe(5'b00001), .RedFifoDepth(2), .EnPerf(1'b0)
+    .SfuPipe(5'b00001), .RedFifoDepth(2), .SpmReadPorts(SpmReadPorts), .EnPerf(1'b0)
   ) dut (
     .clk_i, .rst_ni, .cmd_valid_i, .cmd_ready_o, .cmd_op_i, .cmd_func_i, .cmd_half_log2_i,
     .cmd_rows_i, .cmd_cols_i, .cmd_d_i, .cmd_a_i, .cmd_b_i, .cmd_c_i, .cmd_s_i, .cmd_t_i,

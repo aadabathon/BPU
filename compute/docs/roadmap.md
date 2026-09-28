@@ -17,7 +17,8 @@ streams from memory.
 | C4 | FVU core: element-wise, conversions, quantize, canonical reductions, SPM | **done** | FVU tests at 16 / 2 / 4 lanes |
 | C5 | FVU 2-D ops and Qwen blocks: VVECMAT, per-row scalars, VPERM (RoPE), conv, delta rule, attention | **done** | same, plus the compiled Qwen program |
 | C6 | Compute top: operation stream, QMV ↔ SPM gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
-| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, formal (QMV) done; timing and PnR not started |
+| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, formal (QMV, FVU) done; timing and PnR not started |
+| C8 | FVU throughput: pipelined reduction merge, multi-port SPM | **done** | reduce unit test, FVU + decode bit-exact; 54.5 → 80.9 tok/s projected (2B, 128 ctx) |
 
 ## Qwen3.5-2B coverage
 
@@ -33,14 +34,14 @@ checked bit-exact on the RTL:
 
 ## Next, in priority order
 
-1. **Performance** (see [performance.md](performance.md)). The vector unit limits
-   Qwen3.5-2B to about 56 tok/s at short context and 5 at 8K:
-   * attention on QMV with an INT8 KV cache (needs an ml-models accuracy check);
-   * a pipelined reduction merge;
-   * a multi-port SPM;
+1. **Performance** (see [performance.md](performance.md)). The fpga RTL projects to
+   81 / 40 / 15 tok/s on Qwen3.5-2B at 128 / 2K / 8K context. The pipelined merge
+   and the 3-port SPM are done. Remaining:
+   * attention on QMV with an INT8 KV cache: 124 / 84 / 78 tok/s. The QMV W8 mode
+     already computes it; it needs an ml-models accuracy check and a KV layout
+     from rtl-memory;
+   * VVECMAT accumulator forwarding: about +10% at short context;
    * a fused delta-rule op.
-
-   Together the first three reach roughly 130 / 89 / 83 tok/s (128 / 2K / 8K context).
 2. **Timing closure.**
    * Out-of-context Vivado runs at 250 MHz for `bpu_qmv_slice` (fpga config) and `bpu_fvu_lane`.
    * OpenLane 2 on sky130 for the asic config.
@@ -50,8 +51,9 @@ checked bit-exact on the RTL:
    * fusing int→fp32 with the QMV product multiplier (bit-identical);
    * sizing the SPM for the chosen tapeout model.
 
-   Current estimate: 0.46 mm² sky130 logic plus SRAM macros (performance.md).
-4. **FVU formal:** reduce-FIFO credit safety, and sequencer/writeback ordering under all shapes.
+   Current estimate: 0.44 mm² sky130 logic plus SRAM macros (performance.md).
+4. **FVU formal:** BMC and covers pass. The unbounded PDR proof converges on all
+   but one property in 40 minutes (see verification.md).
 5. **Streaming operands for full-size tensors.** A real 2B model's KV cache and
    128×128 states per head exceed an on-chip SPM, so the FVU needs a streaming
    operand port or tiling support in the compiler.
@@ -59,7 +61,7 @@ checked bit-exact on the RTL:
 ## Tapeout track
 
 * **Candidate:** `bpu_compute_top` at the asic configuration: 1 QMV slice × 16
-  lanes and a 2-lane FVU with one shared SFU. That is about 0.46 mm² of sky130
+  lanes and a 2-lane FVU with one shared SFU. That is about 0.44 mm² of sky130
   logic (pre-layout, typical corner) plus SRAMs, running the tiny model bit-exact
   against the FPGA build and the reference.
 * **Early learning run:** `bpu_qmv_dot` + `bpu_fp32_*` at a tiny configuration on a

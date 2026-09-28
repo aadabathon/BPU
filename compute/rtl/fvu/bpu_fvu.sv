@@ -8,13 +8,15 @@
 // sticky err_cmd_o.
 //
 // Pipeline: the sequencer walks (row, word) items and issues the item's SPM reads
-// (one per cycle: row scalar s, group scalar t, a, b, c); two cycles after its
-// last read the item enters the lanes; Latency later its result is written back
+// (row scalar s, group scalar t, a, b, c; up to SpmReadPorts per cycle, lowest
+// first); two cycles after its last read the item enters the lanes; Latency later its result is written back
 // (element-wise ops) or enters bpu_fvu_reduce (row reductions). VVECMAT is an
 // accumulate  d = (s[r] * a[r,:]) + (r == 0 ? +0 : d)  row after row; consecutive
 // rows are spaced so a row never reads an accumulator word before the previous
 // row has written it. Ops run one at a time; the external SPM port is usable
-// whenever cmd_ready_o is high.
+// whenever cmd_ready_o is high. SpmReadPorts > 1 replicates the SPM storage
+// (every write goes to all copies), so results are identical and only the cycle
+// count changes.
 module bpu_fvu #(
   parameter int unsigned VLanes       = 4,         // power of two, 2..64
   parameter int unsigned SpmWords     = 1024,
@@ -23,6 +25,7 @@ module bpu_fvu #(
   parameter logic [4:0]  SfuPipe      = 5'b11111,
   parameter int unsigned RedFifoDepth = 8,
   parameter int unsigned SfuLanes     = VLanes,    // SFUs shared by the lanes (power of two <= VLanes)
+  parameter int unsigned SpmReadPorts = 1,         // operand reads per cycle (SPM copies), 1..3
   parameter bit          EnPerf       = 1'b1
 ) (
   input  logic                                   clk_i,
@@ -70,6 +73,7 @@ module bpu_fvu #(
   localparam logic [4:0]  LopAbs = 5'd14;
   localparam int unsigned NSub   = V / SfuLanes;             // VSFU sub-items per word
   localparam int unsigned KW     = (NSub > 1) ? $clog2(NSub) : 1;
+  localparam int unsigned NP     = SpmReadPorts;
 
   // ---------------------------------------------------------------------------
   // Op decode helpers
@@ -159,7 +163,8 @@ module bpu_fvu #(
 
   logic [AW-1:0] eoff;                 // element offset of this word within the row
   logic          pad, last_w, last_r, row_start, last_k, last_item;
-  logic [4:0]    need, remain, pick;
+  logic [4:0]    need, remain, picked;
+  logic [NP-1:0][4:0] pick;                               // operand read on each port
   logic          gate_ok, issue, launch;
   logic [AW-1:0] a_el, b_el, c_el, t_el, rd_el;
 
@@ -177,14 +182,25 @@ module bpu_fvu #(
   assign need[3] = (ub_q && !pad) || (vm_q && r_q != '0);              // b (VVECMAT: accumulator)
   assign need[4] = uc_q && !pad;                                       // c
   assign remain  = need & ~issued_q;
-  assign pick    = remain & (~remain + 5'd1);                          // lowest set bit
+
+  // Each port takes the lowest operand still missing.
+  always_comb begin
+    logic [4:0] left;
+    left   = remain;
+    picked = '0;
+    for (int p = 0; p < NP; p++) begin
+      pick[p] = left & (~left + 5'd1);
+      left    = left & ~pick[p];
+      picked  = picked | pick[p];
+    end
+  end
 
   // Starting a new item: reductions need a FIFO credit; VVECMAT rows are spaced.
   assign gate_ok = (issued_q != '0)
                 || ((!red_q || cred_q != '0)
                     && !(vm_q && row_start && r_q != '0 && rowt_q < ($bits(rowt_q))'(VmPeriod)));
   assign issue   = (st_q == SRun) && !seq_done_q && gate_ok && (remain != '0);
-  assign launch  = (st_q == SRun) && !seq_done_q && gate_ok && ((remain & ~pick) == '0);
+  assign launch  = (st_q == SRun) && !seq_done_q && gate_ok && ((remain & ~picked) == '0);
 
   assign a_el  = ra_q + ((op_q == FvuVperm && half_q >= 17'(V)) ? (eoff ^ AW'(half_q)) : eoff);
   assign b_el  = rb_q + eoff;
@@ -192,20 +208,20 @@ module bpu_fvu #(
   assign t_el  = rt_q + AW'(32'(eoff) >> 6);
   assign rd_el = rd_q + eoff;
 
-  // SPM read request for the picked operand
-  logic [AW-1:0] rq_el;
+  // SPM read request of each port
+  logic [NP-1:0][AW-1:0] rq_el;
   always_comb begin
-    unique case (1'b1)
-      pick[0]: rq_el = rs_q;
-      pick[1]: rq_el = t_el;
-      pick[2]: rq_el = a_el;
-      pick[3]: rq_el = b_el;
-      default: rq_el = c_el;
-    endcase
+    for (int p = 0; p < NP; p++) begin
+      if      (pick[p][0]) rq_el[p] = rs_q;
+      else if (pick[p][1]) rq_el[p] = t_el;
+      else if (pick[p][2]) rq_el[p] = a_el;
+      else if (pick[p][3]) rq_el[p] = b_el;
+      else                 rq_el[p] = c_el;
+    end
   end
 
-  logic [4:0]    ret_slot_q;
-  logic [LW-1:0] ret_lane_q;
+  logic [NP-1:0][4:0]    ret_slot_q;
+  logic [NP-1:0][LW-1:0] ret_lane_q;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -218,7 +234,7 @@ module bpu_fvu #(
       k_q        <= '0;
       rowt_q     <= '0;
     end else begin
-      ret_slot_q <= issue ? pick : 5'd0;
+      ret_slot_q <= issue ? pick : '0;
       if (rowt_q != '1) rowt_q <= rowt_q + 1'b1;
       unique case (st_q)
         SIdle: begin
@@ -233,7 +249,7 @@ module bpu_fvu #(
           end
         end
         SRun: begin
-          if (issue) issued_q <= issued_q | pick;
+          if (issue) issued_q <= issued_q | picked;
           if (issue && issued_q == '0 && row_start) rowt_q <= '0;   // a row's first read
           if (launch) begin
             issued_q <= '0;
@@ -310,30 +326,44 @@ module bpu_fvu #(
   // ---------------------------------------------------------------------------
   // SPM
   // ---------------------------------------------------------------------------
-  logic               spm_we, spm_re;
-  logic [WAW-1:0]     spm_waddr, spm_raddr;
+  logic               spm_we;
+  logic [WAW-1:0]     spm_waddr;
+  logic [NP-1:0]      spm_re;
+  logic [NP-1:0][WAW-1:0]  spm_raddr;
+  logic [NP-1:0][V*32-1:0] spm_rdata;
   logic [V-1:0]       spm_wmask;
-  logic [V*32-1:0]    spm_wdata, spm_rdata;
+  logic [V*32-1:0]    spm_wdata;
 
-  bpu_sram_1r1w_be #(.Depth(SpmWords), .Lanes(V), .LaneW(32)) u_spm (
-    .clk_i, .we_i(spm_we), .waddr_i(spm_waddr), .wmask_i(spm_wmask), .wdata_i(spm_wdata),
-    .re_i(spm_re), .raddr_i(spm_raddr), .rdata_o(spm_rdata));
+  // One copy per read port; port 0 also serves the external port.
+  for (genvar p = 0; p < NP; p++) begin : g_spm
+    bpu_sram_1r1w_be #(.Depth(SpmWords), .Lanes(V), .LaneW(32)) u_spm (
+      .clk_i, .we_i(spm_we), .waddr_i(spm_waddr), .wmask_i(spm_wmask), .wdata_i(spm_wdata),
+      .re_i(spm_re[p]), .raddr_i(spm_raddr[p]), .rdata_o(spm_rdata[p]));
+    if (p == 0) begin : g_ext
+      assign spm_re[p]    = issue || (cmd_ready_o && ext_re_i);
+      assign spm_raddr[p] = issue ? WAW'(rq_el[p] >> LW) : ext_raddr_i;
+    end else begin : g_op
+      assign spm_re[p]    = issue && (pick[p] != '0);
+      assign spm_raddr[p] = WAW'(rq_el[p] >> LW);
+    end
+  end
+  assign ext_rdata_o = spm_rdata[0];
 
-  assign spm_re      = issue || (cmd_ready_o && ext_re_i);
-  assign spm_raddr   = issue ? WAW'(rq_el >> LW) : ext_raddr_i;
-  assign ext_rdata_o = spm_rdata;
+  always_ff @(posedge clk_i) begin
+    for (int p = 0; p < NP; p++) ret_lane_q[p] <= rq_el[p][LW-1:0];
+  end
 
-  always_ff @(posedge clk_i) ret_lane_q <= rq_el[LW-1:0];
-
-  // Staging registers (written the cycle after each read)
+  // Staging registers (written the cycle after each read; one port per operand)
   logic [31:0]   st_s, st_t;
   logic [V*32-1:0] st_a, st_b, st_c;
   always_ff @(posedge clk_i) begin
-    if (ret_slot_q[0]) st_s <= spm_rdata[ret_lane_q*32 +: 32];
-    if (ret_slot_q[1]) st_t <= spm_rdata[ret_lane_q*32 +: 32];
-    if (ret_slot_q[2]) st_a <= spm_rdata;
-    if (ret_slot_q[3]) st_b <= spm_rdata;
-    if (ret_slot_q[4]) st_c <= spm_rdata;
+    for (int p = 0; p < NP; p++) begin
+      if (ret_slot_q[p][0]) st_s <= spm_rdata[p][ret_lane_q[p]*32 +: 32];
+      if (ret_slot_q[p][1]) st_t <= spm_rdata[p][ret_lane_q[p]*32 +: 32];
+      if (ret_slot_q[p][2]) st_a <= spm_rdata[p];
+      if (ret_slot_q[p][3]) st_b <= spm_rdata[p];
+      if (ret_slot_q[p][4]) st_c <= spm_rdata[p];
+    end
   end
 
   // ---------------------------------------------------------------------------
@@ -506,6 +536,11 @@ module bpu_fvu #(
       assert (!((o_v && !o_red) && rw_v));
       // The external port is ignored while an op runs.
       if (st_q != SIdle) assert (!(spm_we && !(o_v && !o_red) && !rw_v));
+      // Ports read distinct operands: each staging register has one writer.
+      for (int j = 0; j < 5; j++) begin
+        for (int p = 0; p < NP; p++)
+          for (int q = p + 1; q < NP; q++) assert (!(ret_slot_q[p][j] && ret_slot_q[q][j]));
+      end
     end
   end
 `endif
@@ -517,6 +552,8 @@ module bpu_fvu #(
       $fatal(1, "bpu_fvu: VLanes=%0d must be a power of two in [2, 64]", V);
     if (SfuLanes < 1 || SfuLanes > V || (SfuLanes & (SfuLanes - 1)) != 0)
       $fatal(1, "bpu_fvu: SfuLanes=%0d must be a power of two in [1, VLanes]", SfuLanes);
+    if (SpmReadPorts < 1 || SpmReadPorts > 3)
+      $fatal(1, "bpu_fvu: SpmReadPorts=%0d must be 1, 2 or 3", SpmReadPorts);
   end
   always @(posedge clk_i) begin
     if (rst_ni && !cmd_ready_o && (ext_we_i || ext_re_i))

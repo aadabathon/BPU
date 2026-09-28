@@ -27,7 +27,7 @@ bpu_compute_top           operation stream -> FVU or QMV; shares the FVU scratch
 ├── bpu_fvu               fp32 vector unit (owns the SPM)
 │   ├── bpu_fvu_lane x V  fp32 mul -> add, bf16 round, quantize clamp, select (+ own SFU)
 │   ├── bpu_sfu x SfuLanes shared SFU bank when SfuLanes < VLanes
-│   └── bpu_fvu_reduce    lane adder tree + canonical merge stack; order-key max
+│   └── bpu_fvu_reduce    lane adder tree + pipelined canonical merge; order-key max
 └── bpu_qmv_array         NSlice slices, in-order merge, argmax
     └── bpu_qmv_slice xN  int dot (W4/W8 x A8) -> fp32 scale -> row-interleaved accumulate
 ```
@@ -96,9 +96,12 @@ base and stride); a row scalar is `S[r] = spm[s + r·s_stride]`; a group scalar 
 | `RMAX` `RAMAX` | max of a, of \|a\| → one element per row | a |
 | `VVECMAT` | d[j] = Σ_r S[r]·a[r,j], sequential over rows | a s |
 
-The sequencer issues one SPM read per cycle per operand an item needs (S at a row
-start, T at a group start, then a, b, c), writes back with per-lane masks, and
-spaces VVECMAT rows so no accumulator is read before the previous row wrote it.
+The sequencer issues the SPM reads an item needs (S at a row start, T at a group
+start, then a, b, c), up to `SpmReadPorts` per cycle. It writes back with per-lane
+masks and spaces VVECMAT rows so no accumulator is read before the previous row
+wrote it. Reductions take about one word per cycle. The merge pairs canonical tree
+nodes level by level and overlaps adds from different levels and rows in one
+pipelined adder.
 With `SfuLanes < VLanes`, a VSFU word is issued as `VLanes/SfuLanes` sub-items,
 each feeding one lane group to the shared SFU bank. Results are identical and
 only the cycle count changes.

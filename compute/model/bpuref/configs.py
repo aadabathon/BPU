@@ -77,6 +77,7 @@ class FvuConfig:
     sfu_pipe: int = 0b11111
     red_fifo: int = 8
     sfu_lanes: int | None = None     # SFUs shared by the lanes (None: one per lane)
+    spm_ports: int = 1               # SPM read ports (replicated storage): operand reads per cycle
 
     @property
     def nsfu(self) -> int:
@@ -86,14 +87,15 @@ class FvuConfig:
         return {"VLanes": self.vlanes, "SpmWords": spm_elems // self.vlanes,
                 "MulPipe": f"3'b{self.mul_pipe:03b}", "AddPipe": f"3'b{self.add_pipe:03b}",
                 "SfuPipe": f"5'b{self.sfu_pipe:05b}", "RedFifoDepth": self.red_fifo,
-                "SfuLanes": self.nsfu}
+                "SfuLanes": self.nsfu, "SpmReadPorts": self.spm_ports}
 
 
 FVU_CONFIGS = {
-    "fpga": FvuConfig("fpga", vlanes=16, sfu_lanes=4),
+    # red_fifo covers the reduction credit loop (lane pipeline + lane tree + 4) for full rate
+    "fpga": FvuConfig("fpga", vlanes=16, sfu_lanes=4, red_fifo=24, spm_ports=3),
     "asic": FvuConfig("asic", vlanes=2, mul_pipe=0b010, add_pipe=0b010, sfu_pipe=0b01010, sfu_lanes=1),
     "tiny": FvuConfig("tiny", vlanes=4, mul_pipe=0b000, add_pipe=0b000, sfu_pipe=0b00000, red_fifo=2,
-                      sfu_lanes=2),
+                      sfu_lanes=2, spm_ports=2),
 }
 
 
@@ -128,7 +130,7 @@ class TopConfig:
                 "QAddPipe": f"3'b{q.add_pipe:03b}", "VLanes": f.vlanes,
                 "SpmWords": spm_elems // f.vlanes, "FMulPipe": f"3'b{f.mul_pipe:03b}",
                 "FAddPipe": f"3'b{f.add_pipe:03b}", "FSfuPipe": f"5'b{f.sfu_pipe:05b}",
-                "RedFifoDepth": f.red_fifo, "FSfuLanes": f.nsfu}
+                "RedFifoDepth": f.red_fifo, "FSfuLanes": f.nsfu, "FSpmPorts": f.spm_ports}
 
 QMV_ARRAY_CONFIGS = {
     # F2: one slice per HBM pseudo-channel.

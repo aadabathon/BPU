@@ -50,6 +50,13 @@ package bpu_compute_pkg;
     else                                     f32_order_key = b | 32'h8000_0000;
   endfunction
 
+  // Inverse of f32_order_key; key 0 (NaN, or nothing selected) gives the canonical NaN.
+  function automatic logic [31:0] f32_from_order_key(input logic [31:0] k);
+    if (k == '0)       f32_from_order_key = Fp32QNaN;
+    else if (k[31])    f32_from_order_key = k & 32'h7fff_ffff;
+    else               f32_from_order_key = ~k;
+  endfunction
+
   // fp32 holding an exact integer in [-127, 127] (a VQCLAMP result) -> int8.
   // Anything below 1 in magnitude reads as 0; out-of-range values saturate.
   function automatic logic [7:0] f32_to_i8(input logic [31:0] b);

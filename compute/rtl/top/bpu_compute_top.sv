@@ -32,7 +32,8 @@ module bpu_compute_top #(
   parameter logic [2:0]  FAddPipe      = 3'b010,
   parameter logic [4:0]  FSfuPipe      = 5'b01010,
   parameter int unsigned RedFifoDepth  = 8,
-  parameter int unsigned FSfuLanes     = VLanes
+  parameter int unsigned FSfuLanes     = VLanes,
+  parameter int unsigned FSpmPorts     = 1
 ) (
   input  logic                                clk_i,
   input  logic                                rst_ni,
@@ -113,7 +114,8 @@ module bpu_compute_top #(
 
   bpu_fvu #(
     .VLanes(V), .SpmWords(SpmWords), .MulPipe(FMulPipe), .AddPipe(FAddPipe),
-    .SfuPipe(FSfuPipe), .RedFifoDepth(RedFifoDepth), .SfuLanes(FSfuLanes), .EnPerf(1'b0)
+    .SfuPipe(FSfuPipe), .RedFifoDepth(RedFifoDepth), .SfuLanes(FSfuLanes),
+    .SpmReadPorts(FSpmPorts), .EnPerf(1'b0)
   ) u_fvu (
     .clk_i, .rst_ni,
     .cmd_valid_i(f_cmd_valid), .cmd_ready_o(f_cmd_ready),
