@@ -50,6 +50,18 @@ package bpu_compute_pkg;
     else                                     f32_order_key = b | 32'h8000_0000;
   endfunction
 
+  // fp32 holding an exact integer in [-127, 127] (a VQCLAMP result) -> int8.
+  // Anything below 1 in magnitude reads as 0; out-of-range values saturate.
+  function automatic logic [7:0] f32_to_i8(input logic [31:0] b);
+    logic [23:0] sig;
+    logic [7:0]  mag;
+    sig = {1'b1, b[22:0]};
+    if (b[30:23] < 8'd127)       mag = 8'd0;
+    else if (b[30:23] > 8'd133)  mag = 8'd127;
+    else                         mag = 8'(sig >> (8'd150 - b[30:23]));
+    f32_to_i8 = b[31] ? 8'(-mag) : mag;
+  endfunction
+
   // ---------------------------------------------------------------------------
   // Latency helpers, so parents can size their delay lines
   // ---------------------------------------------------------------------------

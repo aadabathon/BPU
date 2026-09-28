@@ -104,6 +104,25 @@ QMV_SLICE_CONFIGS = {
 for _cfg in QMV_SLICE_CONFIGS.values():
     _cfg.validate()
 
+
+@dataclass(frozen=True)
+class TopConfig:
+    """bpu_compute_top: a QMV array and an FVU sharing the FVU scratchpad."""
+    name: str
+    nslice: int
+    qmv: QmvSliceConfig
+    fvu: FvuConfig
+
+    def hdl_parameters(self, spm_elems: int) -> dict[str, int | str]:
+        q, f = self.qmv, self.fvu
+        return {"NSlice": self.nslice, "Lanes": q.lanes, "RowInterleave": q.row_interleave,
+                "MaxK": q.max_k, "QProdReg": f"1'b{q.prod_reg}", "QTreeRegEvery": q.tree_reg_every,
+                "QI2fReg": f"1'b{q.i2f_reg}", "QMulPipe": f"3'b{q.mul_pipe:03b}",
+                "QAddPipe": f"3'b{q.add_pipe:03b}", "VLanes": f.vlanes,
+                "SpmWords": spm_elems // f.vlanes, "FMulPipe": f"3'b{f.mul_pipe:03b}",
+                "FAddPipe": f"3'b{f.add_pipe:03b}", "FSfuPipe": f"5'b{f.sfu_pipe:05b}",
+                "RedFifoDepth": f.red_fifo}
+
 QMV_ARRAY_CONFIGS = {
     # F2: one slice per HBM pseudo-channel.
     "fpga": QmvArrayConfig("fpga", nslice=32, slice=QMV_SLICE_CONFIGS["fpga"]),
@@ -111,4 +130,11 @@ QMV_ARRAY_CONFIGS = {
     "asic": QmvArrayConfig("asic", nslice=1, slice=QMV_SLICE_CONFIGS["asic"]),
     # Non-power-of-two slice count exercises the round-robin merge and argmax reduce.
     "tiny": QmvArrayConfig("tiny", nslice=3, slice=QMV_SLICE_CONFIGS["tiny"]),
+}
+
+
+TOP_CONFIGS = {
+    "fpga": TopConfig("fpga", nslice=32, qmv=QMV_SLICE_CONFIGS["fpga"], fvu=FVU_CONFIGS["fpga"]),
+    "asic": TopConfig("asic", nslice=1, qmv=QMV_SLICE_CONFIGS["asic"], fvu=FVU_CONFIGS["asic"]),
+    "tiny": TopConfig("tiny", nslice=3, qmv=QMV_SLICE_CONFIGS["tiny"], fvu=FVU_CONFIGS["tiny"]),
 }

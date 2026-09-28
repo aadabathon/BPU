@@ -21,3 +21,4 @@ qmv/bpu_add_tree.sv
 qmv/bpu_qmv_dot.sv
 qmv/bpu_qmv_slice.sv
 qmv/bpu_qmv_array.sv
+top/bpu_compute_top.sv

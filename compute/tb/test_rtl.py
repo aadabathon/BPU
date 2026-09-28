@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from cocotb_tools.runner import get_runner
 
-from bpuref.configs import FVU_CONFIGS, QMV_ARRAY_CONFIGS, QMV_SLICE_CONFIGS
+from bpuref.configs import FVU_CONFIGS, QMV_ARRAY_CONFIGS, QMV_SLICE_CONFIGS, TOP_CONFIGS
 
 COMPUTE = Path(__file__).resolve().parents[1]
 RTL = COMPUTE / "rtl"
@@ -79,3 +79,11 @@ def test_qmv_slice(cfg: str) -> None:
 def test_qmv_array(cfg: str) -> None:
     run("bpu_qmv_array", "cocotb_qmv_array", QMV_ARRAY_CONFIGS[cfg].hdl_parameters(), cfg,
         {"BPU_QMV_CFG": cfg})
+
+
+@pytest.mark.parametrize("cfg", list(TOP_CONFIGS))
+def test_compute_top_qwen(cfg: str) -> None:
+    """A full tiny-Qwen3.5 decode, several tokens, bit-exact against bpuref."""
+    spm = 65536
+    run("bpu_compute_top", "cocotb_compute_top", TOP_CONFIGS[cfg].hdl_parameters(spm), cfg,
+        {"BPU_TOP_CFG": cfg, "BPU_SPM_ELEMS": str(spm), "BPU_STEPS": os.environ.get("BPU_STEPS", "3")})

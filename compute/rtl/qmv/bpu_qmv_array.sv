@@ -3,7 +3,9 @@
 // Row striping: global row n is computed by slice n % NSlice (as its local row
 // n / NSlice). Every slice receives the same command and the same activations;
 // each has its own weight/scale streams (on F2, slice s <- HBM pseudo-channel s).
-// A command covers N = NSlice * RowInterleave * nrowblk rows.
+// A command covers N = NSlice * RowInterleave * nrowblk rows, of which the first
+// cmd_nrows_i are real: rows at or beyond it (the padding up to a whole row block)
+// are computed but never emitted and never win the argmax.
 //
 // Output (y_*) carries {index, value}:
 //   stream mode (cmd_argmax_i = 0): all N rows, merged back into global row order.
@@ -49,6 +51,7 @@ module bpu_qmv_array #(
   input  logic [$clog2(MaxK/64+1)-1:0]        cmd_ngroups_i,  // K / 64
   input  logic [RowBlkW-1:0]                  cmd_nrowblk_i,  // N / (NSlice * RowInterleave)
   input  logic                                cmd_argmax_i,
+  input  logic [IdxW-1:0]                     cmd_nrows_i,    // 1 .. N
 
   // Per-slice weight and scale streams (slice s owns bit s / field s)
   input  logic [NSlice-1:0]                   w_valid_i,
@@ -100,7 +103,8 @@ module bpu_qmv_array #(
   assign cmd_ready_o = (&s_cmd_ready) && (state_q == OutIdle);
   assign cmd_fire    = cmd_valid_i && cmd_ready_o;
   assign cmd_legal   = (cmd_ngroups_i != '0) && (cmd_ngroups_i <= GW'(MaxK / 64))
-                    && (cmd_nrowblk_i != '0);
+                    && (cmd_nrowblk_i != '0) && (cmd_nrows_i != '0)
+                    && (cmd_nrows_i <= IdxW'(cmd_nrowblk_i) * IdxW'(NSlice * RowInterleave));
 
   for (genvar s = 0; s < NSlice; s++) begin : g_slice
     bpu_qmv_slice #(
@@ -110,7 +114,7 @@ module bpu_qmv_array #(
     ) u_slice (
       .clk_i, .rst_ni,
       .x_we_i, .x_waddr_i, .x_wdata_i, .xs_we_i, .xs_waddr_i, .xs_wdata_i,
-      .cmd_valid_i(cmd_fire), .cmd_ready_o(s_cmd_ready[s]), .cmd_wfmt_i,
+      .cmd_valid_i(cmd_fire && cmd_legal), .cmd_ready_o(s_cmd_ready[s]), .cmd_wfmt_i,
       .cmd_ngroups_i, .cmd_nrowblk_i,
       .w_valid_i(w_valid_i[s]), .w_ready_o(w_ready_o[s]), .w_data_i(w_data_i[s*Lanes*4 +: Lanes*4]),
       .ws_valid_i(ws_valid_i[s]), .ws_ready_o(ws_ready_o[s]), .ws_data_i(ws_data_i[s*16 +: 16]),
@@ -122,7 +126,14 @@ module bpu_qmv_array #(
     );
   end
 
-  assign err_cmd_o  = |s_err;
+  // Slices only ever see legal commands; the array flags illegal ones itself.
+  logic arr_err_q;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni)                     arr_err_q <= 1'b0;
+    else if (status_clr_i)           arr_err_q <= 1'b0;
+    else if (cmd_fire && !cmd_legal) arr_err_q <= 1'b1;
+  end
+  assign err_cmd_o  = arr_err_q || (|s_err);
   assign flag_nan_o = |s_nan;
   assign flag_inf_o = |s_inf;
   assign busy_o     = (|s_busy) || (state_q != OutIdle);
@@ -131,6 +142,7 @@ module bpu_qmv_array #(
   // Output: in-order merge (stream mode) or argmax (collect, reduce, emit)
   // ---------------------------------------------------------------------------
   logic [IdxW-1:0]     idx_q, last_idx_q;   // next global row / last row of the command
+  logic [IdxW-1:0]     nrows_q;             // rows >= nrows_q are padding
   logic [SW-1:0]       cur_q;                // slice holding the next global row
   logic [LocW-1:0]     rows_per_slice_q;
   logic [SW-1:0]       red_q;                // argmax reduction cursor
@@ -139,34 +151,42 @@ module bpu_qmv_array #(
   logic [IdxW-1:0]     best_idx_q;
   logic                y_pop;
 
+  logic live, m_pop;
   assign y_pop = y_valid_o && y_ready_i;
+  assign live  = (idx_q < nrows_q);
+  // The merge consumes the current slice's head: delivered if live, dropped if padding.
+  assign m_pop = s_y_valid[cur_q] && (live ? y_ready_i : 1'b1);
 
   // Per-slice running argmax over that slice's rows (local order = global order).
-  logic [NSlice-1:0]        a_done;
+  logic [NSlice-1:0]        a_done, a_have;
   logic [NSlice*32-1:0]     a_key, a_val;
   logic [NSlice*LocW-1:0]   a_lidx;
 
   for (genvar s = 0; s < NSlice; s++) begin : g_amax
     logic [LocW-1:0] cnt_q, lidx_q;
     logic [31:0]     key_q, val_q, key_in;
-    logic            pop;
+    logic            pop, row_live, lhave_q;
 
-    assign key_in = f32_order_key(s_y_data[s*32 +: 32]);
-    assign pop    = s_y_valid[s] && s_y_ready[s] && (state_q == OutCollect);
+    assign key_in   = f32_order_key(s_y_data[s*32 +: 32]);
+    assign pop      = s_y_valid[s] && s_y_ready[s] && (state_q == OutCollect);
+    assign row_live = (IdxW'(cnt_q) * IdxW'(NSlice) + IdxW'(s)) < nrows_q;
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
-        cnt_q <= '0;
+        cnt_q   <= '0;
+        lhave_q <= 1'b0;
       end else if (cmd_fire) begin
-        cnt_q <= '0;
+        cnt_q   <= '0;
+        lhave_q <= 1'b0;
       end else if (pop) begin
         cnt_q <= cnt_q + 1'b1;
+        if (row_live) lhave_q <= 1'b1;
       end
     end
 
     // Strictly greater keeps the first (smallest-index) maximum.
     always_ff @(posedge clk_i) begin
-      if (pop && (cnt_q == '0 || key_in > key_q)) begin
+      if (pop && row_live && (!lhave_q || key_in > key_q)) begin
         key_q  <= key_in;
         val_q  <= s_y_data[s*32 +: 32];
         lidx_q <= cnt_q;
@@ -174,6 +194,7 @@ module bpu_qmv_array #(
     end
 
     assign a_done[s]                 = (cnt_q == rows_per_slice_q);
+    assign a_have[s]                 = lhave_q;
     assign a_key[s*32 +: 32]         = key_q;
     assign a_val[s*32 +: 32]         = val_q;
     assign a_lidx[s*LocW +: LocW]    = lidx_q;
@@ -182,7 +203,7 @@ module bpu_qmv_array #(
   // Slice ready: the merge takes the current slice's head; argmax takes everything.
   always_comb begin
     s_y_ready = '0;
-    if (state_q == OutStream)  s_y_ready[cur_q] = y_ready_i;
+    if (state_q == OutStream)  s_y_ready[cur_q] = live ? y_ready_i : 1'b1;
     if (state_q == OutCollect) s_y_ready = ~a_done;
   end
 
@@ -194,8 +215,9 @@ module bpu_qmv_array #(
   assign cand_key  = a_key[red_q*32 +: 32];
   assign cand_val  = a_val[red_q*32 +: 32];
   assign cand_idx  = IdxW'(a_lidx[red_q*LocW +: LocW]) * IdxW'(NSlice) + IdxW'(red_q);
-  assign cand_wins = !have_q || (cand_key > best_key_q)
-                  || (cand_key == best_key_q && cand_idx < best_idx_q);
+  assign cand_wins = a_have[red_q]
+                  && (!have_q || (cand_key > best_key_q)
+                      || (cand_key == best_key_q && cand_idx < best_idx_q));
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -206,6 +228,7 @@ module bpu_qmv_array #(
       rows_per_slice_q <= '0;
       red_q            <= '0;
       have_q           <= 1'b0;
+      nrows_q          <= '0;
     end else begin
       unique case (state_q)
         OutIdle: begin
@@ -214,11 +237,12 @@ module bpu_qmv_array #(
             idx_q            <= '0;
             cur_q            <= '0;
             last_idx_q       <= IdxW'(cmd_nrowblk_i) * IdxW'(NSlice * RowInterleave) - 1'b1;
+            nrows_q          <= cmd_nrows_i;
             rows_per_slice_q <= LocW'(cmd_nrowblk_i) * LocW'(RowInterleave);
           end
         end
         OutStream: begin
-          if (y_pop) begin
+          if (m_pop) begin
             idx_q <= idx_q + 1'b1;
             cur_q <= (cur_q == SW'(NSlice - 1)) ? '0 : cur_q + 1'b1;
             if (idx_q == last_idx_q) state_q <= OutIdle;
@@ -232,7 +256,7 @@ module bpu_qmv_array #(
           end
         end
         OutReduce: begin
-          have_q <= 1'b1;
+          if (cand_wins) have_q <= 1'b1;
           if (red_q == SW'(NSlice - 1)) state_q <= OutEmit;
           else                          red_q   <= red_q + 1'b1;
         end
@@ -252,7 +276,7 @@ module bpu_qmv_array #(
     end
   end
 
-  assign y_valid_o = (state_q == OutStream) ? s_y_valid[cur_q] : (state_q == OutEmit);
+  assign y_valid_o = (state_q == OutStream) ? (s_y_valid[cur_q] && live) : (state_q == OutEmit);
   assign y_data_o  = (state_q == OutStream) ? s_y_data[cur_q*32 +: 32] : best_val_q;
   assign y_index_o = (state_q == OutStream) ? idx_q : best_idx_q;
 

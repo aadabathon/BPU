@@ -22,9 +22,10 @@ ROWS_PER_BLOCK = NS * R
 
 
 class Op:
-    def __init__(self, wfmt, w, ws, x, xs, argmax=False):
+    def __init__(self, wfmt, w, ws, x, xs, argmax=False, nrows=None):
         self.wfmt, self.w, self.ws, self.x, self.xs, self.argmax = wfmt, w, ws, x, xs, argmax
         self.n, self.k = w.shape
+        self.nrows = self.n if nrows is None else nrows       # rows >= nrows are padding
         self.ref = qmv_ref(w, ws, x, xs)
         streams = pack_array_streams(w, ws, NS, LANES, R, wfmt)
         self.beats = [b for b, _ in streams]
@@ -32,10 +33,11 @@ class Op:
         self.x_words = pack_x_words(x, LANES)
 
     def expected(self):
+        live = self.ref[:self.nrows]
         if self.argmax:
-            i = argmax_ref(self.ref)
-            return [(i, int(f32_bits(self.ref[i])))]
-        return [(i, int(f32_bits(v))) for i, v in enumerate(self.ref)]
+            i = argmax_ref(live)
+            return [(i, int(f32_bits(live[i])))]
+        return [(i, int(f32_bits(v))) for i, v in enumerate(live)]
 
 
 def random_op(rng, *, wfmt=None, max_groups=4, max_blocks=2, argmax=False):
@@ -74,6 +76,7 @@ async def run_ops(dut, ops, rng, p_idle=0.2, p_stall=0.2):
         dut.cmd_ngroups_i.value = op.k // GROUP
         dut.cmd_nrowblk_i.value = op.n // ROWS_PER_BLOCK
         dut.cmd_argmax_i.value = int(op.argmax)
+        dut.cmd_nrows_i.value = op.nrows
         await RisingEdge(dut.clk_i)
         dut.cmd_valid_i.value = 0
         w = cocotb.start_soon(bm.multi_source(dut, dut.w_valid_i, dut.w_ready_o, dut.w_data_i,
@@ -146,12 +149,30 @@ async def qwen_shapes(dut):
 
 
 @cocotb.test()
+async def padding_rows_are_dropped(dut):
+    """Rows >= nrows (the pad up to a whole row block) are never emitted and never
+    win the argmax, even when they hold the largest values."""
+    rng = np.random.default_rng(14)
+    await bm.reset(dut, INPUTS(dut))
+    ops = []
+    for argmax in (False, True):
+        op = random_op(rng, wfmt=W4, max_blocks=2, argmax=argmax)
+        nrows = max(1, op.n - int(rng.integers(1, ROWS_PER_BLOCK + 1)))
+        op.w[nrows:] = 7
+        op.ws[nrows:] = 0x4700                                    # bf16 32768: huge rows
+        op.x[:] = np.minimum(np.abs(op.x), 127)                  # stay inside int8
+        ops.append(Op(op.wfmt, op.w, op.ws, op.x, op.xs, argmax, nrows))
+    await run_ops(dut, ops, rng)
+
+
+@cocotb.test()
 async def illegal_command(dut):
     rng = np.random.default_rng(13)
     await bm.reset(dut, INPUTS(dut))
     dut.cmd_valid_i.value = 1
     dut.cmd_ngroups_i.value = 0
     dut.cmd_nrowblk_i.value = 1
+    dut.cmd_nrows_i.value = 1
     await RisingEdge(dut.clk_i)
     dut.cmd_valid_i.value = 0
     await RisingEdge(dut.clk_i)

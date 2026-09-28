@@ -112,4 +112,6 @@ def pack_array_streams(w_codes, w_scales, nslice: int, lanes: int, row_interleav
 def pack_x_words(x_codes, lanes: int) -> list[int]:
     """Activation buffer words: element k lives in word k // Lanes, byte k % Lanes."""
     x = np.asarray(x_codes, dtype=np.int64)
+    if x.min(initial=0) < -128 or x.max(initial=0) > 127:
+        raise ValueError("activation code out of int8 range")
     return [_pack(x[i:i + lanes], 8) for i in range(0, len(x), lanes)]
