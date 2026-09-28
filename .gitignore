@@ -1,0 +1,12 @@
+# Simulation / synthesis outputs
+sim_build/
+synth_out/
+results.xml
+*.vcd
+*.fst
+*.fst.hier
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc

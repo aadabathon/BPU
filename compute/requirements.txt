@@ -1,0 +1,4 @@
+# Python deps for compute tests (OSS CAD Suite already ships cocotb and pytest).
+numpy>=1.26
+cocotb>=2.0
+pytest>=8
