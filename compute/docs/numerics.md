@@ -66,7 +66,7 @@ Ops are 2-D (rows × cols) with per-row strided operands; see
 * **Element-wise** ops are the fp32 rules above per element. `VSUB` is `a + (-b)`;
   `VAXPY` is `(s·a) + b`; `VMULADD` is `(a·b) + c`.
 * **Sums** (`RSUM`, `RDOT`): pad the row with +0 to `P = max(64, next_pow2(cols))`,
-  then add adjacent pairs level by level. The lane adder tree plus the merge stack
+  then add adjacent pairs level by level. The lane adder tree plus the pipelined merge
   reproduce exactly this tree at any lane count. `RDOT` rounds each product first.
 * **Max** (`RMAX`, `RAMAX`): total-order key as above; an all-NaN row gives canonical NaN.
 * **`VVECMAT`** `d[j] = Σ_r s[r]·a[r,j]`: sequential over rows, starting from +0.

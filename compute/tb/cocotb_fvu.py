@@ -81,7 +81,19 @@ def _candidate_op(rng):
 
 
 def directed_ops():
-    """Each opcode on awkward shapes, plus the corner behaviours."""
+    """Each opcode on awkward shapes, plus the corner behaviours. The shapes are laid
+    out for a 2048-element SPM; smaller SPMs (gate-level) keep the ops that fit."""
+    ops = []
+    for op in _directed_candidates():
+        try:
+            F.validate(op, SPM)
+            ops.append(op)
+        except ValueError:
+            assert SPM < 2048, f"directed op does not fit: {op}"
+    return ops
+
+
+def _directed_candidates():
     ops = []
     D = SRC_END
     for op in sorted(F.USES):
@@ -185,7 +197,8 @@ async def directed(dut):
     await bm.reset(dut, INPUTS(dut))
     ops = directed_ops()
     await run_and_compare(dut, ops, random_spm(rng))
-    dut._log.info(f"[{CFG.name}] {len(ops)} directed ops bit-exact")
+    dut._log.info(f"[{CFG.name}] {len(ops)} of {len(_directed_candidates())} directed ops "
+                  f"(those that fit a {SPM}-element SPM) bit-exact")
 
 
 @cocotb.test()

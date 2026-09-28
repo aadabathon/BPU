@@ -79,5 +79,5 @@ In WSL, `BPU_BUILD_ROOT=~/bpu_build` keeps simulator builds off `/mnt/c`, which 
    only to model-accuracy checks.
 4. **Portable RTL.** Flat-vector ports, no vendor primitives, memories through
    wrappers, `-Wall` clean, synthesizable by Yosys.
-5. **Programs are checked.** `bpuref.fvu.validate` rejects misaligned operands and
+5. **Programs are checked.** `bpuref.fvu.validate` rejects out-of-range or misaligned operands and
    read/write aliasing; the compiler's output must pass it.

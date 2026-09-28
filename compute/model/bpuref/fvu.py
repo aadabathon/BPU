@@ -87,6 +87,10 @@ def validate(op: FvuOp, spm_size: int) -> None:
         raise ValueError(f"{op}: VPERM needs power-of-two half dividing cols/2")
     if op.op == VVECMAT and op.d_stride:
         raise ValueError(f"{op}: VVECMAT writes one vector (d_stride must be 0)")
+    # Every element the op touches must exist (the hardware would wrap the address).
+    for name, idx in [("d", _write_set(op))] + list(_read_sets(op).items()):
+        if np.asarray(idx).size and int(np.max(idx)) >= spm_size:
+            raise ValueError(f"{op}: operand {name} reaches element {int(np.max(idx))} of a {spm_size}-element SPM")
     check_hazards(op)
 
 

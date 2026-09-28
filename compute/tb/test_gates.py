@@ -24,13 +24,19 @@ TARGETS = {
                         "TreeRegEvery": 1, "I2fReg": "1'b0", "MulPipe": "3'b000", "AddPipe": "3'b000"},
                        "cocotb_qmv_slice", {"BPU_QMV_CFG": "tiny"}),
     # 2 lanes sharing one SFU (the tapeout shape); combinational units keep the netlist small.
+    # Mapped without ABC (see NO_ABC).
     "fvu_small": ("bpu_fvu",
-                  {"VLanes": 2, "SfuLanes": 1, "SpmWords": 256, "MulPipe": "3'b000", "AddPipe": "3'b000",
+                  {"VLanes": 2, "SfuLanes": 1, "SpmWords": 1024, "MulPipe": "3'b000", "AddPipe": "3'b000",
                    "SfuPipe": "5'b00000", "RedFifoDepth": 2},
-                  "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_SPM_ELEMS": "512"}),
+                  "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_SPM_ELEMS": "2048"}),
     "fvu_reduce": ("bpu_fvu_reduce", {"Lanes": 2, "AW": 16, "AddPipe": "3'b010", "FifoDepth": 8},
                    "cocotb_fvu_reduce", {"BPU_RED_LANES": "2", "BPU_RED_FIFO": "8", "BPU_RED_ADDPIPE": "2"}),
 }
+
+
+# ABC takes hours on the flattened FVU (fully combinational fp32 and SFU logic);
+# Yosys's own gate mapping produces an equally valid gate-level netlist in seconds.
+NO_ABC = {"fvu_small"}
 
 
 def synthesize(name: str, top: str, params: dict, out: Path) -> Path:
@@ -39,11 +45,11 @@ def synthesize(name: str, top: str, params: dict, out: Path) -> Path:
     files = " ".join(str(p) for p in rtl_sources())
     script = f"""
         read_slang -DSYNTHESIS --top {top} {gparams} {files}
-        synth -top {top} -flatten
+        synth -top {top} -flatten{" -noabc" if name in NO_ABC else ""}
         memory_map
         opt -full
         techmap; opt -fast
-        abc -g AND,NAND,OR,NOR,XOR,XNOR,MUX
+        {"" if name in NO_ABC else "abc -g AND,NAND,OR,NOR,XOR,XNOR,MUX"}
         opt_clean
         rename -top {top}
         write_verilog -noattr {netlist}

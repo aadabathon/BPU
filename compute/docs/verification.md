@@ -23,11 +23,11 @@ and the Hugging Face check.
 | FVU control is safe for all time | unbounded PDR (2 lanes, 2-entry FIFO): 7 of 8 properties proved. The merge-level bound is open (see below) | `cd formal && sby -f fvu.sby prove` |
 | Qwen3.5 semantics | float64 reference = Hugging Face transformers 5.17 to ~2e-7 over 5–6 decode steps | `pytest model/tests/test_qwen_ref.py` (needs torch), `python -m bpuref.hf_check` |
 | The compiled program computes Qwen3.5 | W4A8 program vs float64 model with the same weights: logit cosine > 0.999, argmax agrees | `pytest model/tests/test_qwen_ref.py` |
-| Programs are hazard-free | every FVU op of the compiled program passes `validate()` (alignment + read/write aliasing) | same |
+| Programs are hazard-free | every FVU op of the compiled program passes `validate()` (alignment, bounds, read/write aliasing) | same |
 | **The RTL runs Qwen3.5** | tiny-Qwen decode, 3 tokens, fpga / asic / tiny: whole SPM and chosen token bit-exact after every token | `pytest -k compute_top` |
 | The cycle model behind the 2B projection tracks the RTL | within 5% of the measured cycles on every decode step at every configuration (today −2.8% / +0.2% / −0.2%) | same |
 | The Tiny Tapeout wrapper works through its pins | host byte protocol, 979 operand pairs (random bits, typical values, all pairs of 24 specials, the bring-up vectors) × add / sub / mul / loopback, bit-exact | `pytest -k tt_fp32` |
-| Synthesis preserves function | gate-level netlists (Yosys, flattened, memories mapped to flops) of the SFU and the QMV slice pass their unchanged cocotb tests | `BPU_GATES=1 pytest tb/test_gates.py` |
+| Synthesis preserves function | gate-level netlists (Yosys, flattened, memories mapped to flops) of the SFU, the QMV slice, the FVU reduction unit and a 2-lane FVU with a shared SFU and a 2048-element SPM pass their unchanged cocotb tests (the FVU: all 36 directed ops and 3 × 40 random ops). The FVU is mapped without ABC, which takes hours on its flattened combinational fp32 logic | `BPU_GATES=1 pytest tb/test_gates.py` |
 | The tests can fail | bugs injected by hand during development (adder tie rounding, W8 low-nibble sign, SFU log2 rounding) were each caught by the suite | re-inject and run the matching `pytest -k` |
 
 ## What is not verified yet
