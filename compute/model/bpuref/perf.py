@@ -54,6 +54,7 @@ class CycleModel:
         words = -(-op.cols // V)
         red = op.op in F.REDUCTIONS
         wrow = max(64, _pow2(op.cols)) // V if red else words
+        nsub = V // self.cfg.fvu.nsfu if op.op == F.VSFU else 1
         cycles = 0
         for r in range(op.rows):
             row = 0
@@ -65,7 +66,7 @@ class CycleModel:
                 reads += (not pad)
                 reads += (("b" in uses and not pad) or (op.op == F.VVECMAT and r > 0))
                 reads += ("c" in uses and not pad)
-                row += max(1, -(-reads // self.spm_ports))
+                row += nsub * max(1, -(-reads // self.spm_ports))
             if op.op == F.VVECMAT and r > 0:
                 row = max(row, self.vm_period)
             cycles += row

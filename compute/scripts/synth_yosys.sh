@@ -22,9 +22,9 @@ top[slice-tiny]=bpu_qmv_slice;  params[slice-tiny]="-GLanes=4 -GRowInterleave=2 
 top[array-asic]=bpu_qmv_array;  params[array-asic]="-GNSlice=1 ${params[slice-asic]}"
 top[array-tiny]=bpu_qmv_array;  params[array-tiny]="-GNSlice=3 ${params[slice-tiny]}"
 top[sfu]=bpu_sfu;               params[sfu]="-GPipeMask=5'b01010"
-top[fvu-asic]=bpu_fvu;          params[fvu-asic]="-GVLanes=2 -GSpmWords=1024 -GMulPipe=3'b010 -GAddPipe=3'b010 -GSfuPipe=5'b01010"
-top[fvu-tiny]=bpu_fvu;          params[fvu-tiny]="-GVLanes=4 -GSpmWords=512 -GMulPipe=3'b000 -GAddPipe=3'b000 -GSfuPipe=5'b00000"
-top[top-asic]=bpu_compute_top;  params[top-asic]="-GMaxK=256 -GSpmWords=1024"
+top[fvu-asic]=bpu_fvu;          params[fvu-asic]="-GVLanes=2 -GSfuLanes=1 -GSpmWords=1024 -GMulPipe=3'b010 -GAddPipe=3'b010 -GSfuPipe=5'b01010"
+top[fvu-tiny]=bpu_fvu;          params[fvu-tiny]="-GVLanes=4 -GSfuLanes=2 -GSpmWords=512 -GMulPipe=3'b000 -GAddPipe=3'b000 -GSfuPipe=5'b00000"
+top[top-asic]=bpu_compute_top;  params[top-asic]="-GMaxK=256 -GSpmWords=1024 -GFSfuLanes=1"
 top[top-tiny]=bpu_compute_top;  params[top-tiny]="-GNSlice=3 -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GVLanes=4 -GSpmWords=512 -GQProdReg=0 -GQTreeRegEvery=1 -GQI2fReg=0 -GQMulPipe=3'b000 -GQAddPipe=3'b000 -GFMulPipe=3'b000 -GFAddPipe=3'b000 -GFSfuPipe=5'b00000"
 
 targets=("$@")

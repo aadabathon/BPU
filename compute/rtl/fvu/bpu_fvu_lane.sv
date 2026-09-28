@@ -10,7 +10,8 @@
 module bpu_fvu_lane #(
   parameter logic [2:0] MulPipe = 3'b111,
   parameter logic [2:0] AddPipe = 3'b111,
-  parameter logic [4:0] SfuPipe = 5'b11111
+  parameter logic [4:0] SfuPipe = 5'b11111,
+  parameter bit         HasSfu  = 1'b1        // 0: SFU results come from a shared bank (sf_ext_i)
 ) (
   input  logic        clk_i,
   input  logic        rst_ni,
@@ -23,6 +24,7 @@ module bpu_fvu_lane #(
   input  logic [31:0] c_i,
   input  logic [31:0] s_i,
   input  logic [31:0] t_i,
+  input  logic [31:0] sf_ext_i,             // shared-bank SFU result, Ls cycles after the inputs
   output logic [31:0] res_o
 );
 
@@ -90,9 +92,17 @@ module bpu_fvu_lane #(
   // Special functions
   // ---------------------------------------------------------------------------
   logic [31:0] sf, sf_t;
-  bpu_sfu #(.PipeMask(SfuPipe)) u_sfu (
-    .clk_i, .rst_ni, .valid_i, .func_i, .a_i(a_i), .valid_o(), .y_o(sf)
-  );
+  if (HasSfu) begin : g_sfu
+    logic unused_ext;
+    assign unused_ext = ^sf_ext_i;
+    bpu_sfu #(.PipeMask(SfuPipe)) u_sfu (
+      .clk_i, .rst_ni, .valid_i, .func_i, .a_i(a_i), .valid_o(), .y_o(sf)
+    );
+  end else begin : g_shared_sfu
+    logic unused_func;
+    assign unused_func = ^func_i;
+    assign sf = sf_ext_i;
+  end
   bpu_delay #(.Width(32), .Depth(Ltot - Ls)) u_ds (.clk_i, .rst_ni, .d_i(sf), .q_o(sf_t));
 
   // ---------------------------------------------------------------------------

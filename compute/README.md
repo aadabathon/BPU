@@ -57,6 +57,7 @@ BPU_SEED=7 pytest -k "fvu or qmv"          # other random stimulus
 WAVES=1 pytest -k "fvu and tiny"           # waveforms in the build directory
 scripts/lint.sh                            # Verilator -Wall
 scripts/synth_yosys.sh                     # Yosys synthesis + cell counts
+SKY130_LIB=.../sky130_fd_sc_hd__tt_025C_1v80.lib scripts/synth_sky130.sh   # sky130 area/delay estimate
 scripts/soak_fp32.sh 100000000             # fp32 units vs host FPU
 scripts/soak_sfu.sh                        # SFU vs reference, ~138M vectors
 (cd formal && sby -f qmv_slice.sby)        # unbounded proofs

@@ -35,11 +35,12 @@ lint bpu_qmv_array -GNSlice=32 -GLanes=64 -GRowInterleave=4 -GMaxK=6144         
 lint bpu_qmv_array -GNSlice=1 -GLanes=16 -GRowInterleave=1 -GMaxK=2048 -GTreeRegEvery=0      "-GMulPipe=3'b010" "-GAddPipe=3'b010"                                         # asic
 lint bpu_qmv_array -GNSlice=3 -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GProdReg=0 -GTreeRegEvery=1      -GI2fReg=0 "-GMulPipe=3'b000" "-GAddPipe=3'b000"                             # tiny
 
-lint bpu_fvu -GVLanes=16 -GSpmWords=4096                                             # fpga
-lint bpu_fvu -GVLanes=2 -GSpmWords=1024 "-GMulPipe=3'b010" "-GAddPipe=3'b010" "-GSfuPipe=5'b01010"  # asic
-lint bpu_fvu -GVLanes=4 -GSpmWords=512 "-GMulPipe=3'b000" "-GAddPipe=3'b000" "-GSfuPipe=5'b00000"   # tiny
+lint bpu_fvu -GVLanes=16 -GSpmWords=4096 -GSfuLanes=4                                # fpga
+lint bpu_fvu -GVLanes=2 -GSpmWords=1024 -GSfuLanes=1 "-GMulPipe=3'b010" "-GAddPipe=3'b010" "-GSfuPipe=5'b01010"  # asic
+lint bpu_fvu -GVLanes=4 -GSpmWords=512 -GSfuLanes=2 "-GMulPipe=3'b000" "-GAddPipe=3'b000" "-GSfuPipe=5'b00000"   # tiny
+lint bpu_fvu -GVLanes=4 -GSpmWords=512                                               # one SFU per lane
 
-lint bpu_compute_top                                                                  # asic-like defaults
+lint bpu_compute_top -GFSfuLanes=1                                                    # asic-like defaults
 lint bpu_compute_top -GNSlice=3 -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GVLanes=4 -GSpmWords=16384      -GQProdReg=0 -GQTreeRegEvery=1 -GQI2fReg=0 "-GQMulPipe=3'b000" "-GQAddPipe=3'b000"      "-GFMulPipe=3'b000" "-GFAddPipe=3'b000" "-GFSfuPipe=5'b00000"                     # tiny
 lint bpu_compute_top -GNSlice=32 -GLanes=64 -GRowInterleave=4 -GMaxK=6144 -GVLanes=16 -GSpmWords=8192      -GQProdReg=1 -GQTreeRegEvery=2 "-GQMulPipe=3'b111" "-GQAddPipe=3'b111"      "-GFMulPipe=3'b111" "-GFAddPipe=3'b111" "-GFSfuPipe=5'b11111"                     # fpga
 

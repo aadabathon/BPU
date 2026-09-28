@@ -9,9 +9,11 @@ stream (position 1):
 
 | Configuration | QMV | FVU | Cycles / token |
 |---|---|---|---|
-| fpga | 32 slices × 64 lanes | 16 lanes | 32,853 |
-| asic | 1 × 16 | 2 lanes | 179,827 |
-| tiny | 3 × 4 | 4 lanes, combinational | 138,384 |
+| fpga | 32 slices × 64 lanes | 16 lanes, 4 shared SFUs | 34,038 |
+| asic | 1 × 16 | 2 lanes, 1 shared SFU | 182,578 |
+| tiny | 3 × 4 | 4 lanes, 2 shared SFUs, combinational | 139,787 |
+
+With one SFU per lane the cycle counts were 32,853 / 179,827 / 138,384; sharing costs 1–4%.
 
 ## Cycle model
 
@@ -23,9 +25,9 @@ stream (position 1):
 
 | Configuration | Measured | Modelled | Error |
 |---|---|---|---|
-| fpga | 32,853 | 32,132 | −2.2% |
-| asic | 179,827 | 180,203 | +0.2% |
-| tiny | 138,384 | 137,433 | −0.7% |
+| fpga | 34,038 | 33,317 | −2.1% |
+| asic | 182,578 | 182,954 | +0.2% |
+| tiny | 139,787 | 138,836 | −0.7% |
 
 ## Projection: Qwen3.5-2B at the fpga configuration, 250 MHz
 
@@ -36,18 +38,18 @@ previous ones, in tokens/s:
 
 | | 128 ctx | 2K ctx | 8K ctx |
 |---|---|---|---|
-| **Current RTL** | **56** | **15** | **4.6** |
-| + 3-port SPM (all operand reads in one cycle) | 71 | 18 | 5.3 |
-| + pipelined reduction merge (1 node/cycle) | 85 | 42 | 16 |
-| + attention K·q and pᵀV on the QMV engine (INT8 KV) | 131 | 89 | 83 |
+| **Current RTL** | **54.5** | **15.1** | **4.6** |
+| + 3-port SPM (all operand reads in one cycle) | 68.7 | 17.8 | 5.3 |
+| + pipelined reduction merge (1 node/cycle) | 81.3 | 41.1 | 15.9 |
+| + attention K·q and pᵀV on the QMV engine (INT8 KV) | 123.8 | 84.5 | 78.2 |
 
-Where the current RTL spends a 2K-context token (16.4M cycles):
+Where the current RTL spends a 2K-context token (16.6M cycles):
 
 | Work | Cycles |
 |---|---|
 | Reductions (attention scores: one RDOT row per position per head) | 9.6M |
 | VVECMAT (attention pᵀV, DeltaNet state reads) | 4.5M |
-| Element-wise (DeltaNet state decay/update, norms, SiLU…) | 1.4M |
+| Element-wise (DeltaNet state decay/update, norms, SiLU…) | 1.5M |
 | QMV | 0.97M |
 
 **The QMV engine is not the bottleneck.** At 0.97M cycles/token it alone would
@@ -67,20 +69,39 @@ The vector unit is the bottleneck. Recommended next steps, in order of payoff:
 All four keep the numerics contract, and none changes a result bit, except
 attention-on-QMV, which changes the KV format.
 
-## Area (Yosys, generic cells, SRAMs excluded)
+## Area and timing
 
-`scripts/synth_yosys.sh` at the asic configuration:
+**sky130** (`scripts/synth_sky130.sh`): the asic configuration mapped onto
+`sky130_fd_sc_hd` cells, typical corner, SRAMs excluded. These are pre-layout
+numbers: no wires, placement or clock tree, and ABC's delay is area-oriented.
+Useful for sizing a tapeout, not for sign-off.
+
+| Block | Area | Cells | ABC critical path |
+|---|---|---|---|
+| `bpu_qmv_slice` (16 lanes) | 0.111 mm² | 18,951 | 20.7 ns |
+| `bpu_sfu` | 0.134 mm² | 25,236 | 19.7 ns |
+| `bpu_fvu` (2 lanes, 1 shared SFU) | 0.327 mm² | 50,876 | ~30–35 ns |
+| `bpu_compute_top` (asic, 1 shared SFU) | **0.458 mm²** | 72,202 | ~24–28 ns |
+| (same with one SFU per lane) | 0.575 mm² | 94,376 | |
+
+So the compute logic of the tapeout candidate is about **0.46 mm²** plus SRAM
+macros for the SPM and the QMV activation buffer, which fits comfortably in a
+Caravel-class ~10 mm² user area. The asic pipelining settings reach roughly
+30–40 MHz before wires. Deeper pipeline settings (the same parameters the fpga
+configuration uses) trade flops for clock.
+
+**Generic cells** (`scripts/synth_yosys.sh`, technology-independent), asic configuration:
 
 | Block | Cells | Flops |
 |---|---|---|
-| `bpu_qmv_slice` (16 lanes) | 14.7K | 887 |
+| `bpu_qmv_slice` | 14.7K | 887 |
 | `bpu_qmv_array` (1 slice) | 16.3K | 1,145 |
 | `bpu_sfu` | 17.9K | 197 |
-| `bpu_fvu` (2 lanes) | 63.3K | 3,436 |
-| `bpu_compute_top` | 79.4K | 4,090 |
+| `bpu_fvu` (2 lanes, per-lane SFUs) | 63.3K | 3,436 |
+| `bpu_compute_top` (per-lane SFUs) | 79.4K | 4,090 |
 
-The SFU is the largest per-lane cost. Sharing one SFU across FVU lanes (a planned
-`SfuLanes` parameter) is the main area lever for a tapeout configuration. The
-compute top at the asic configuration is roughly 0.5–1 mm² of logic in sky130 (a
-generic-cell estimate), plus SPM/activation SRAM. A tapeout would size the SPM for
-the tiny model (≈ 42K elements ≈ 168 KB fp32 today) or smaller.
+**SFU sharing** (`SfuLanes`): the SFU is the largest per-lane cost. Sharing one
+SFU across the asic configuration's two FVU lanes saves 20% of the compute top's
+area for about 1.5% more cycles on the tiny model. The fpga configuration shares
+4 SFUs among 16 lanes. A tapeout would also size the SPM for its model; the tiny
+model needs about 42K fp32 elements.

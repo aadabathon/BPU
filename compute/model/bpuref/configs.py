@@ -76,17 +76,24 @@ class FvuConfig:
     add_pipe: int = 0b111
     sfu_pipe: int = 0b11111
     red_fifo: int = 8
+    sfu_lanes: int | None = None     # SFUs shared by the lanes (None: one per lane)
+
+    @property
+    def nsfu(self) -> int:
+        return self.sfu_lanes or self.vlanes
 
     def hdl_parameters(self, spm_elems: int) -> dict[str, int | str]:
         return {"VLanes": self.vlanes, "SpmWords": spm_elems // self.vlanes,
                 "MulPipe": f"3'b{self.mul_pipe:03b}", "AddPipe": f"3'b{self.add_pipe:03b}",
-                "SfuPipe": f"5'b{self.sfu_pipe:05b}", "RedFifoDepth": self.red_fifo}
+                "SfuPipe": f"5'b{self.sfu_pipe:05b}", "RedFifoDepth": self.red_fifo,
+                "SfuLanes": self.nsfu}
 
 
 FVU_CONFIGS = {
-    "fpga": FvuConfig("fpga", vlanes=16),
-    "asic": FvuConfig("asic", vlanes=2, mul_pipe=0b010, add_pipe=0b010, sfu_pipe=0b01010),
-    "tiny": FvuConfig("tiny", vlanes=4, mul_pipe=0b000, add_pipe=0b000, sfu_pipe=0b00000, red_fifo=2),
+    "fpga": FvuConfig("fpga", vlanes=16, sfu_lanes=4),
+    "asic": FvuConfig("asic", vlanes=2, mul_pipe=0b010, add_pipe=0b010, sfu_pipe=0b01010, sfu_lanes=1),
+    "tiny": FvuConfig("tiny", vlanes=4, mul_pipe=0b000, add_pipe=0b000, sfu_pipe=0b00000, red_fifo=2,
+                      sfu_lanes=2),
 }
 
 
@@ -121,7 +128,7 @@ class TopConfig:
                 "QAddPipe": f"3'b{q.add_pipe:03b}", "VLanes": f.vlanes,
                 "SpmWords": spm_elems // f.vlanes, "FMulPipe": f"3'b{f.mul_pipe:03b}",
                 "FAddPipe": f"3'b{f.add_pipe:03b}", "FSfuPipe": f"5'b{f.sfu_pipe:05b}",
-                "RedFifoDepth": f.red_fifo}
+                "RedFifoDepth": f.red_fifo, "FSfuLanes": f.nsfu}
 
 QMV_ARRAY_CONFIGS = {
     # F2: one slice per HBM pseudo-channel.

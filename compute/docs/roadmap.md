@@ -45,10 +45,12 @@ checked bit-exact on the RTL:
    * Out-of-context Vivado runs at 250 MHz for `bpu_qmv_slice` (fpga config) and `bpu_fvu_lane`.
    * OpenLane 2 on sky130 for the asic config.
    * The fp32 multiplier's normalize stage and the adder's post-add shift are the known long paths.
-3. **Area for tapeout.**
-   * An `SfuLanes` parameter to share SFUs across FVU lanes.
-   * Fusing int→fp32 with the QMV product multiplier (bit-identical).
-   * Sizing the SPM for the chosen tapeout model.
+3. **Area for tapeout.** SFU sharing (`SfuLanes`) is done: −20% compute-top area
+   at the asic configuration. Remaining levers:
+   * fusing int→fp32 with the QMV product multiplier (bit-identical);
+   * sizing the SPM for the chosen tapeout model.
+
+   Current estimate: 0.46 mm² sky130 logic plus SRAM macros (performance.md).
 4. **FVU formal:** reduce-FIFO credit safety, and sequencer/writeback ordering under all shapes.
 5. **Streaming operands for full-size tensors.** A real 2B model's KV cache and
    128×128 states per head exceed an on-chip SPM, so the FVU needs a streaming
@@ -57,8 +59,9 @@ checked bit-exact on the RTL:
 ## Tapeout track
 
 * **Candidate:** `bpu_compute_top` at the asic configuration: 1 QMV slice × 16
-  lanes and a 2-lane FVU, about 80K generic cells plus SRAMs, running the tiny
-  model bit-exact against the FPGA build and the reference.
+  lanes and a 2-lane FVU with one shared SFU. That is about 0.46 mm² of sky130
+  logic (pre-layout, typical corner) plus SRAMs, running the tiny model bit-exact
+  against the FPGA build and the reference.
 * **Early learning run:** `bpu_qmv_dot` + `bpu_fp32_*` at a tiny configuration on a
   Tiny Tapeout shuttle, to learn the flow first.
 

@@ -13,7 +13,9 @@ from bpuref import sfu
 from bpuref.configs import FVU_CONFIGS
 from bpuref.fp import f32_equal
 
-CFG = FVU_CONFIGS[os.environ.get("BPU_FVU_CFG", "tiny")]
+_name = os.environ.get("BPU_FVU_CFG", "tiny")
+# "gate": the gate-level netlist's shape (2 lanes, one shared SFU)
+CFG = FVU_CONFIGS[_name] if _name in FVU_CONFIGS else FVU_CONFIGS["asic"]
 V = CFG.vlanes
 SPM = int(os.environ.get("BPU_SPM_ELEMS", "2048"))
 SRC_END = SPM // 2                 # vector sources in [0, VEC_END), scalars in [VEC_END, SRC_END),

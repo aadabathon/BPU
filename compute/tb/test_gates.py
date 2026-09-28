@@ -23,10 +23,11 @@ TARGETS = {
                        {"Lanes": 4, "RowInterleave": 2, "MaxK": 256, "ProdReg": "1'b0",
                         "TreeRegEvery": 1, "I2fReg": "1'b0", "MulPipe": "3'b000", "AddPipe": "3'b000"},
                        "cocotb_qmv_slice", {"BPU_QMV_CFG": "tiny"}),
-    "fvu_tiny": ("bpu_fvu",
-                 {"VLanes": 4, "SpmWords": 128, "MulPipe": "3'b000", "AddPipe": "3'b000",
-                  "SfuPipe": "5'b00000", "RedFifoDepth": 2},
-                 "cocotb_fvu", {"BPU_FVU_CFG": "tiny", "BPU_SPM_ELEMS": "512"}),
+    # 2 lanes sharing one SFU (the tapeout shape); combinational units keep the netlist small.
+    "fvu_small": ("bpu_fvu",
+                  {"VLanes": 2, "SfuLanes": 1, "SpmWords": 256, "MulPipe": "3'b000", "AddPipe": "3'b000",
+                   "SfuPipe": "5'b00000", "RedFifoDepth": 2},
+                  "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_SPM_ELEMS": "512"}),
 }
 
 

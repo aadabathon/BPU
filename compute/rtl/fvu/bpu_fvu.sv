@@ -22,6 +22,7 @@ module bpu_fvu #(
   parameter logic [2:0]  AddPipe      = 3'b111,
   parameter logic [4:0]  SfuPipe      = 5'b11111,
   parameter int unsigned RedFifoDepth = 8,
+  parameter int unsigned SfuLanes     = VLanes,    // SFUs shared by the lanes (power of two <= VLanes)
   parameter bit          EnPerf       = 1'b1
 ) (
   input  logic                                   clk_i,
@@ -67,6 +68,8 @@ module bpu_fvu #(
   localparam int unsigned Ltot = (Lm + La > Ls) ? Lm + La : Ls;
   localparam int unsigned VmPeriod = Ltot + 6;      // min cycles between VVECMAT row starts
   localparam logic [4:0]  LopAbs = 5'd14;
+  localparam int unsigned NSub   = V / SfuLanes;             // VSFU sub-items per word
+  localparam int unsigned KW     = (NSub > 1) ? $clog2(NSub) : 1;
 
   // ---------------------------------------------------------------------------
   // Op decode helpers
@@ -140,13 +143,14 @@ module bpu_fvu #(
   logic [15:0]   rows_q, cols_q;
   logic [16:0]   half_q, wreal_q, wrow_q;
   logic [AW-1:0] ds_q, as_q, bs_q, cs_q, ss_q, ts_q;
-  logic          red_q, vm_q, max_q, ub_q, uc_q, us_q, ut_q;
+  logic          red_q, vm_q, max_q, ub_q, uc_q, us_q, ut_q, sub_q;
 
   // ---------------------------------------------------------------------------
   // Sequencer
   // ---------------------------------------------------------------------------
   logic [15:0]   r_q;
   logic [16:0]   w_q;
+  logic [KW-1:0] k_q;                                     // VSFU sub-item (lane group)
   logic [AW-1:0] rd_q, ra_q, rb_q, rc_q, rs_q, rt_q;      // row bases
   logic [4:0]    issued_q;                                 // {c, b, a, t, s}
   logic [$clog2(RedFifoDepth+1)-1:0] cred_q;
@@ -154,7 +158,7 @@ module bpu_fvu #(
   logic          seq_done_q;
 
   logic [AW-1:0] eoff;                 // element offset of this word within the row
-  logic          pad, last_w, last_r, row_start;
+  logic          pad, last_w, last_r, row_start, last_k, last_item;
   logic [4:0]    need, remain, pick;
   logic          gate_ok, issue, launch;
   logic [AW-1:0] a_el, b_el, c_el, t_el, rd_el;
@@ -164,6 +168,8 @@ module bpu_fvu #(
   assign last_w    = (w_q == wrow_q - 1'b1);
   assign last_r    = (r_q == rows_q - 1'b1);
   assign row_start = (w_q == '0);
+  assign last_k    = !sub_q || (k_q == KW'(NSub - 1));
+  assign last_item = last_w && last_k;                   // last item of the row
 
   assign need[0] = us_q && row_start;                                  // s
   assign need[1] = ut_q && (blk_off(eoff) == '0);                      // t (new 64-group)
@@ -209,6 +215,7 @@ module bpu_fvu #(
       ret_slot_q <= '0;
       r_q        <= '0;
       w_q        <= '0;
+      k_q        <= '0;
       rowt_q     <= '0;
     end else begin
       ret_slot_q <= issue ? pick : 5'd0;
@@ -221,6 +228,7 @@ module bpu_fvu #(
             issued_q   <= '0;
             r_q        <= '0;
             w_q        <= '0;
+            k_q        <= '0;
             rowt_q     <= '0;
           end
         end
@@ -229,14 +237,19 @@ module bpu_fvu #(
           if (issue && issued_q == '0 && row_start) rowt_q <= '0;   // a row's first read
           if (launch) begin
             issued_q <= '0;
-            if (!last_w) begin
-              w_q <= w_q + 1'b1;
+            if (!last_k) begin
+              k_q <= k_q + 1'b1;
             end else begin
-              w_q <= '0;
-              if (!last_r) r_q <= r_q + 1'b1;
-              else         seq_done_q <= 1'b1;
+              k_q <= '0;
+              if (!last_w) begin
+                w_q <= w_q + 1'b1;
+              end else begin
+                w_q <= '0;
+                if (!last_r) r_q <= r_q + 1'b1;
+                else         seq_done_q <= 1'b1;
+              end
             end
-            if (last_w && last_r) st_q <= SDrain;
+            if (last_item && last_r) st_q <= SDrain;
           end
         end
         SDrain: ;
@@ -264,6 +277,7 @@ module bpu_fvu #(
       uc_q    <= op_uses_c(cmd_op_i);
       us_q    <= op_uses_s(cmd_op_i);
       ut_q    <= (cmd_op_i == FvuVmulg);
+      sub_q   <= (cmd_op_i == FvuVsfu) && (NSub > 1);
       ds_q    <= (cmd_op_i == FvuVvecmat) ? '0 : cmd_ds_i;
       as_q    <= cmd_as_i;
       bs_q    <= (cmd_op_i == FvuVvecmat) ? '0 : cmd_bs_i;
@@ -276,7 +290,7 @@ module bpu_fvu #(
       rc_q    <= cmd_c_i;
       rs_q    <= cmd_s_i;
       rt_q    <= cmd_t_i;
-    end else if (launch && last_w) begin
+    end else if (launch && last_item) begin
       rd_q <= rd_q + ds_q;
       ra_q <= ra_q + as_q;
       rb_q <= rb_q + bs_q;
@@ -327,13 +341,14 @@ module bpu_fvu #(
   // ---------------------------------------------------------------------------
   logic [V-1:0] mask;
   for (genvar l = 0; l < V; l++) begin : g_mask
-    assign mask[l] = !pad && ((32'(eoff) + l) < 32'(cols_q));
+    assign mask[l] = !pad && ((32'(eoff) + l) < 32'(cols_q))
+                  && (!sub_q || (KW'(l / SfuLanes) == k_q));
   end
 
-  localparam int unsigned MW = 1 + 1 + 1 + 1 + 1 + V + AW;   // zb, red, max, first, last, mask, dest
+  localparam int unsigned MW = KW + 1 + 1 + 1 + 1 + 1 + V + AW;   // k, zb, red, max, first, last, mask, dest
   logic          l1_v, l2_v;
   logic [MW-1:0] l1_m, l2_m, lnow_m;
-  assign lnow_m = {vm_q && r_q == '0, red_q, max_q, row_start, last_w, mask,
+  assign lnow_m = {k_q, vm_q && r_q == '0, red_q, max_q, row_start, last_w, mask,
                    red_q ? rd_q : rd_el};
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -350,8 +365,10 @@ module bpu_fvu #(
     l2_m <= l1_m;
   end
 
-  logic e_zb;
-  assign e_zb = l2_m[MW-1];            // VVECMAT first row: accumulate onto +0
+  logic          e_zb;
+  logic [KW-1:0] e_k;
+  assign e_k  = l2_m[MW-1 -: KW];
+  assign e_zb = l2_m[MW-KW-1];         // VVECMAT first row: accumulate onto +0
 
   // Operand a, with VPERM's in-word lane swap (partner distance < VLanes).
   logic [V*32-1:0] e_a;
@@ -366,12 +383,32 @@ module bpu_fvu #(
   // ---------------------------------------------------------------------------
   // Lanes
   // ---------------------------------------------------------------------------
+  // Shared SFU bank (SfuLanes < VLanes): sub-item k feeds lanes k*SfuLanes ..; every
+  // lane receives the output of bank unit (lane mod SfuLanes) at the lane's own SFU
+  // timing, and write masks keep only the sub-item's lanes.
+  logic [V*32-1:0] sf_ext;
+  if (NSub > 1) begin : g_sfu_bank
+    logic [SfuLanes*32-1:0] bank_out;
+    for (genvar j = 0; j < SfuLanes; j++) begin : g_unit
+      bpu_sfu #(.PipeMask(SfuPipe)) u_sfu (
+        .clk_i, .rst_ni, .valid_i(l2_v), .func_i(func_q),
+        .a_i(e_a[(int'(e_k) * SfuLanes + j)*32 +: 32]), .valid_o(), .y_o(bank_out[j*32 +: 32]));
+    end
+    for (genvar l = 0; l < V; l++) begin : g_fan
+      assign sf_ext[l*32 +: 32] = bank_out[(l % SfuLanes)*32 +: 32];
+    end
+  end else begin : g_no_bank
+    logic unused_k;
+    assign unused_k = ^e_k;
+    assign sf_ext = '0;
+  end
+
   logic [V*32-1:0] res;
   for (genvar l = 0; l < V; l++) begin : g_lane
-    bpu_fvu_lane #(.MulPipe(MulPipe), .AddPipe(AddPipe), .SfuPipe(SfuPipe)) u_lane (
+    bpu_fvu_lane #(.MulPipe(MulPipe), .AddPipe(AddPipe), .SfuPipe(SfuPipe), .HasSfu(NSub == 1)) u_lane (
       .clk_i, .rst_ni, .valid_i(l2_v), .lop_i(lop_q), .func_i(func_q), .zero_b_i(e_zb),
       .a_i(e_a[l*32 +: 32]), .b_i(st_b[l*32 +: 32]), .c_i(st_c[l*32 +: 32]),
-      .s_i(st_s), .t_i(st_t), .res_o(res[l*32 +: 32]));
+      .s_i(st_s), .t_i(st_t), .sf_ext_i(sf_ext[l*32 +: 32]), .res_o(res[l*32 +: 32]));
   end
 
   logic          o_v;
@@ -382,8 +419,9 @@ module bpu_fvu #(
 
   bpu_delay #(.Width(1), .Depth(Ltot), .Reset(1'b1)) u_ov (
     .clk_i, .rst_ni, .d_i(l2_v), .q_o(o_v));
+  logic [KW-1:0] unused_o_k;
   bpu_delay #(.Width(MW), .Depth(Ltot)) u_om (
-    .clk_i, .rst_ni, .d_i(l2_m), .q_o({unused_o_zb, o_red, o_max, o_first, o_last, o_mask, o_dest}));
+    .clk_i, .rst_ni, .d_i(l2_m), .q_o({unused_o_k, unused_o_zb, o_red, o_max, o_first, o_last, o_mask, o_dest}));
 
   // ---------------------------------------------------------------------------
   // Reductions
@@ -477,6 +515,8 @@ module bpu_fvu #(
   initial begin
     if (V < 2 || V > 64 || (V & (V - 1)) != 0)
       $fatal(1, "bpu_fvu: VLanes=%0d must be a power of two in [2, 64]", V);
+    if (SfuLanes < 1 || SfuLanes > V || (SfuLanes & (SfuLanes - 1)) != 0)
+      $fatal(1, "bpu_fvu: SfuLanes=%0d must be a power of two in [1, VLanes]", SfuLanes);
   end
   always @(posedge clk_i) begin
     if (rst_ni && !cmd_ready_o && (ext_we_i || ext_re_i))
