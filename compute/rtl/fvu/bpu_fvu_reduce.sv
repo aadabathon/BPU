@@ -8,12 +8,14 @@
 //        the canonical tree does, taking up to one word node per cycle.
 //   max: running maximum of the total-order key; all-NaN gives canonical NaN.
 // Each finished row produces one element write (wr_*). pop_o returns a credit to
-// the issuing sequencer for every item taken out of the input FIFO.
+// the issuing sequencer for every item taken out of the input FIFO. Consecutive
+// rows may differ in kind and in length (any power of two words); results of
+// different rows may be written out of order.
 module bpu_fvu_reduce #(
-  parameter int unsigned Lanes     = 4,
-  parameter int unsigned AW        = 16,       // element address width
-  parameter logic [2:0]  AddPipe   = 3'b111,
-  parameter int unsigned FifoDepth = 8,
+  parameter int unsigned Lanes       = 4,
+  parameter int unsigned AW          = 16,     // element address width
+  parameter logic [2:0]  AddPipe     = 3'b111,
+  parameter int unsigned FifoDepth   = 8,
   parameter int unsigned MaxColsLog2 = 16      // rows up to 2^16 elements (the cols field)
 ) (
   input  logic               clk_i,
