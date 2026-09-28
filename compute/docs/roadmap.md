@@ -17,7 +17,7 @@ streams from memory.
 | C4 | FVU core: element-wise, conversions, quantize, canonical reductions, SPM | **done** | FVU tests at 16 / 2 / 4 lanes |
 | C5 | FVU 2-D ops and Qwen blocks: VVECMAT, per-row scalars, VPERM (RoPE), conv, delta rule, attention | **done** | same, plus the compiled Qwen program |
 | C6 | Compute top: operation stream, QMV ↔ SPM gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
-| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, formal (QMV, FVU) done; timing and PnR not started |
+| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim of every engine, unbounded control proofs (QMV, FVU) done; timing and PnR not started |
 | C8 | FVU throughput: pipelined reduction merge, multi-port SPM, VVECMAT forwarding | **done** | reduce unit test, FVU + decode bit-exact; 54.5 → 89.4 tok/s projected (2B, 128 ctx) |
 
 ## Qwen3.5-2B coverage
@@ -55,10 +55,10 @@ checked bit-exact on the RTL:
    * sizing the SPM for the chosen tapeout model.
 
    Current estimate: 0.43 mm² sky130 logic plus SRAM macros (performance.md).
-4. **FVU formal:** BMC and covers pass. Unbounded PDR proves 7 of 8 properties in
-   about a minute. The open one is the merge-level bound: a parked node always
-   has a register. It needs an invariant tying pending tree levels to each row's
-   word count (see verification.md).
+4. **Formal coverage of data.** The control logic of both engines is proven
+   unbounded. Data-dependent correctness (VVECMAT forwarding, the merge's pairing
+   order) rests on bit-exact simulation. A symbolic-data model at a tiny shape
+   would close that gap.
 5. **Capacity: where the 2B model's state lives.** The tiny model fits the SPM; the
    2B model does not. In fp32:
    * DeltaNet state: 18 layers × 16 heads × 128×128 = 18.9 MB;

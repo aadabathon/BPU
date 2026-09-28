@@ -61,7 +61,7 @@ scripts/synth_yosys.sh                     # Yosys synthesis + cell counts
 SKY130_LIB=.../sky130_fd_sc_hd__tt_025C_1v80.lib scripts/synth_sky130.sh   # sky130 area/delay estimate
 scripts/soak_fp32.sh 100000000             # fp32 units vs host FPU
 scripts/soak_sfu.sh                        # SFU vs reference, ~138M vectors
-(cd formal && sby -f qmv_slice.sby)        # unbounded proofs
+(cd formal && sby --sequential -f qmv_slice.sby && sby --sequential -f fvu.sby)   # unbounded proofs (~15 min, 16 GB)
 BPU_GATES=1 pytest tb/test_gates.py        # gate-level simulation (~4 min)
 (cd model && python3 -m bpuref.hf_check)   # vs Hugging Face (needs torch + transformers)
 (cd model && python3 -m bpuref.perf)       # cycle model + 2B projection
