@@ -25,6 +25,14 @@ package bpu_compute_pkg;
   // Canonical quiet NaN produced by every fp32 unit.
   localparam logic [31:0] Fp32QNaN = 32'h7fc0_0000;
 
+  // FVU opcodes (bpuref.fvu).
+  localparam logic [4:0] FvuVadd = 5'd0,  FvuVsub = 5'd1,   FvuVmul = 5'd2,  FvuVmuls = 5'd3,
+                         FvuVadds = 5'd4, FvuVaxpy = 5'd5,  FvuVmuladd = 5'd6, FvuVmulg = 5'd7,
+                         FvuVsfu = 5'd8,  FvuVrbf16 = 5'd9, FvuVcopy = 5'd10, FvuVperm = 5'd11,
+                         FvuVqclamp = 5'd12, FvuVsel = 5'd13,
+                         FvuRsum = 5'd16, FvuRdot = 5'd17,  FvuRmax = 5'd18, FvuRamax = 5'd19,
+                         FvuVvecmat = 5'd24;
+
   // Special-function unit function codes (bpuref.sfu: RCP, RSQRT, EXP2, EXP, LOG2).
   localparam logic [2:0] SfuRcp   = 3'd0;
   localparam logic [2:0] SfuRsqrt = 3'd1;

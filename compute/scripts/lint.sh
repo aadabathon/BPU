@@ -35,4 +35,8 @@ lint bpu_qmv_array -GNSlice=32 -GLanes=64 -GRowInterleave=4 -GMaxK=6144         
 lint bpu_qmv_array -GNSlice=1 -GLanes=16 -GRowInterleave=1 -GMaxK=2048 -GTreeRegEvery=0      "-GMulPipe=3'b010" "-GAddPipe=3'b010"                                         # asic
 lint bpu_qmv_array -GNSlice=3 -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GProdReg=0 -GTreeRegEvery=1      -GI2fReg=0 "-GMulPipe=3'b000" "-GAddPipe=3'b000"                             # tiny
 
+lint bpu_fvu -GVLanes=16 -GSpmWords=4096                                             # fpga
+lint bpu_fvu -GVLanes=2 -GSpmWords=1024 "-GMulPipe=3'b010" "-GAddPipe=3'b010" "-GSfuPipe=5'b01010"  # asic
+lint bpu_fvu -GVLanes=4 -GSpmWords=512 "-GMulPipe=3'b000" "-GAddPipe=3'b000" "-GSfuPipe=5'b00000"   # tiny
+
 echo "lint clean"

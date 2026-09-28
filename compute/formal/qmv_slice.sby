@@ -8,21 +8,21 @@
 #   cover: reachability (results flow; back-to-back commands).
 #   cd compute/formal && sby -f qmv_slice.sby
 [tasks]
-prove
-prove_r4
-prove_r1
+prove proofs
+prove_r4 proofs
+prove_r1 proofs
 bmc
 cover
 
 [options]
-prove prove_r4 prove_r1: mode prove
+proofs: mode prove
 bmc: mode bmc
 bmc: depth 40
 cover: mode cover
 cover: depth 16
 
 [engines]
-prove prove_r4 prove_r1: abc pdr
+proofs: abc pdr
 bmc: smtbmc yices
 cover: smtbmc yices
 

@@ -68,6 +68,28 @@ class QmvArrayConfig:
         return {"NSlice": self.nslice, **self.slice.hdl_parameters()}
 
 
+@dataclass(frozen=True)
+class FvuConfig:
+    name: str
+    vlanes: int
+    mul_pipe: int = 0b111
+    add_pipe: int = 0b111
+    sfu_pipe: int = 0b11111
+    red_fifo: int = 8
+
+    def hdl_parameters(self, spm_elems: int) -> dict[str, int | str]:
+        return {"VLanes": self.vlanes, "SpmWords": spm_elems // self.vlanes,
+                "MulPipe": f"3'b{self.mul_pipe:03b}", "AddPipe": f"3'b{self.add_pipe:03b}",
+                "SfuPipe": f"5'b{self.sfu_pipe:05b}", "RedFifoDepth": self.red_fifo}
+
+
+FVU_CONFIGS = {
+    "fpga": FvuConfig("fpga", vlanes=16),
+    "asic": FvuConfig("asic", vlanes=2, mul_pipe=0b010, add_pipe=0b010, sfu_pipe=0b01010),
+    "tiny": FvuConfig("tiny", vlanes=4, mul_pipe=0b000, add_pipe=0b000, sfu_pipe=0b00000, red_fifo=2),
+}
+
+
 QMV_SLICE_CONFIGS = {
     # AWS F2: one 256-bit HBM beat (64 int4 codes = one group) per cycle at ~250 MHz.
     "fpga": QmvSliceConfig("fpga", lanes=64, row_interleave=4, max_k=6144),
