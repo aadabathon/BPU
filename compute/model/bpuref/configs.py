@@ -96,6 +96,8 @@ FVU_CONFIGS = {
     "asic": FvuConfig("asic", vlanes=2, mul_pipe=0b010, add_pipe=0b010, sfu_pipe=0b01010, sfu_lanes=1),
     "tiny": FvuConfig("tiny", vlanes=4, mul_pipe=0b000, add_pipe=0b000, sfu_pipe=0b00000, red_fifo=2,
                       sfu_lanes=2, spm_ports=2),
+    # F2 option: the widest FVU (projected 137 tok/s at 128 ctx vs 89 at 16 lanes).
+    "wide": FvuConfig("wide", vlanes=64, sfu_lanes=16, red_fifo=32, spm_ports=3),
 }
 
 

@@ -11,10 +11,12 @@
 // (row scalar s, group scalar t, a, b, c; up to SpmReadPorts per cycle, lowest
 // first); two cycles after its last read the item enters the lanes; Latency later its result is written back
 // (element-wise ops) or enters bpu_fvu_reduce (row reductions). VVECMAT is an
-// accumulate  d = (s[r] * a[r,:]) + (r == 0 ? +0 : d)  row after row; consecutive
-// rows are spaced so a row never reads an accumulator word before the previous
-// row has written it. Ops run one at a time; the external SPM port is usable
-// whenever cmd_ready_o is high. SpmReadPorts > 1 replicates the SPM storage
+// accumulate  d = (s[r] * a[r,:]) + (r == 0 ? +0 : d)  row after row. A row reads
+// accumulator word w in its item's launch cycle and uses it two cycles later;
+// writes the read may have missed are forwarded from a 2-entry buffer of recent
+// results, and row starts are spaced Latency + 1 cycles so the previous row's
+// word has always been written by then. Ops run one at a time; the external SPM
+// port is usable whenever cmd_ready_o is high. SpmReadPorts > 1 replicates the SPM storage
 // (every write goes to all copies), so results are identical and only the cycle
 // count changes.
 module bpu_fvu #(
@@ -69,7 +71,7 @@ module bpu_fvu #(
   localparam int unsigned Ls   = int'(SfuPipe[0]) + int'(SfuPipe[1]) + int'(SfuPipe[2])
                                + int'(SfuPipe[3]) + int'(SfuPipe[4]);
   localparam int unsigned Ltot = (Lm + La > Ls) ? Lm + La : Ls;
-  localparam int unsigned VmPeriod = Ltot + 6;      // min cycles between VVECMAT row starts
+  localparam int unsigned VmPeriod = Ltot + 1;      // min cycles between VVECMAT row starts
   localparam logic [4:0]  LopAbs = 5'd14;
   localparam int unsigned NSub   = V / SfuLanes;             // VSFU sub-items per word
   localparam int unsigned KW     = (NSub > 1) ? $clog2(NSub) : 1;
@@ -400,6 +402,26 @@ module bpu_fvu #(
   assign e_k  = l2_m[MW-1 -: KW];
   assign e_zb = l2_m[MW-KW-1];         // VVECMAT first row: accumulate onto +0
 
+  // VVECMAT accumulator forwarding. Item (r+1, w) reads accumulator word w (its own
+  // destination) in its launch cycle L and emits at L+2. Row spacing puts the write
+  // of (r, w) at or before L+1; if it was at L or L+1 the read missed it, and it is
+  // in this buffer of the last two write-port results. Re-forwarding a write the
+  // read already saw gives the same data, so the youngest match always wins.
+  logic [1:0]            fw_v_q;
+  logic [1:0][WAW-1:0]   fw_addr_q;
+  logic [1:0][V*32-1:0]  fw_data_q;
+  logic [WAW-1:0]        e_dw;
+  logic                  e_acc;
+  logic [V*32-1:0]       e_b;
+
+  assign e_dw  = WAW'(l2_m[AW-1:0] >> LW);
+  assign e_acc = vm_q && !e_zb;
+  always_comb begin
+    e_b = st_b;
+    if (e_acc && fw_v_q[1] && fw_addr_q[1] == e_dw) e_b = fw_data_q[1];
+    if (e_acc && fw_v_q[0] && fw_addr_q[0] == e_dw) e_b = fw_data_q[0];
+  end
+
   // Operand a, with VPERM's in-word lane swap (partner distance < VLanes).
   logic [V*32-1:0] e_a;
   for (genvar l = 0; l < V; l++) begin : g_perm
@@ -437,7 +459,7 @@ module bpu_fvu #(
   for (genvar l = 0; l < V; l++) begin : g_lane
     bpu_fvu_lane #(.MulPipe(MulPipe), .AddPipe(AddPipe), .SfuPipe(SfuPipe), .HasSfu(NSub == 1)) u_lane (
       .clk_i, .rst_ni, .valid_i(l2_v), .lop_i(lop_q), .func_i(func_q), .zero_b_i(e_zb),
-      .a_i(e_a[l*32 +: 32]), .b_i(st_b[l*32 +: 32]), .c_i(st_c[l*32 +: 32]),
+      .a_i(e_a[l*32 +: 32]), .b_i(e_b[l*32 +: 32]), .c_i(st_c[l*32 +: 32]),
       .s_i(st_s), .t_i(st_t), .sf_ext_i(sf_ext[l*32 +: 32]), .res_o(res[l*32 +: 32]));
   end
 
@@ -452,6 +474,16 @@ module bpu_fvu #(
   logic [KW-1:0] unused_o_k;
   bpu_delay #(.Width(MW), .Depth(Ltot)) u_om (
     .clk_i, .rst_ni, .d_i(l2_m), .q_o({unused_o_k, unused_o_zb, o_red, o_max, o_first, o_last, o_mask, o_dest}));
+
+  // VVECMAT forwarding buffer: the last two write-port results (see e_b above).
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) fw_v_q <= '0;
+    else         fw_v_q <= {fw_v_q[0], o_v && !o_red && vm_q};
+  end
+  always_ff @(posedge clk_i) begin
+    fw_addr_q <= {fw_addr_q[0], WAW'(o_dest >> LW)};
+    fw_data_q <= {fw_data_q[0], res};
+  end
 
   // ---------------------------------------------------------------------------
   // Reductions

@@ -45,7 +45,7 @@ class CycleModel:
         self.V = f.vlanes
         self.la = _pipe(f.add_pipe)
         self.ltot = max(_pipe(f.mul_pipe) + self.la, _pipe(f.sfu_pipe))
-        self.vm_period = self.ltot + 6
+        self.vm_period = self.ltot + 1        # VVECMAT row spacing (accumulator forwarding)
         self.q_lat = (1 + q.prod_reg + (0 if not q.tree_reg_every else (q.lanes.bit_length() - 1) // q.tree_reg_every)
                       + 1 + max(_pipe(q.mul_pipe), q.i2f_reg) + _pipe(q.mul_pipe) + _pipe(q.add_pipe) + 2)
 

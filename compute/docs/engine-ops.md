@@ -97,9 +97,9 @@ base and stride); a row scalar is `S[r] = spm[s + r·s_stride]`; a group scalar 
 | `VVECMAT` | d[j] = Σ_r S[r]·a[r,j], sequential over rows | a s |
 
 The sequencer issues the SPM reads an item needs (S at a row start, T at a group
-start, then a, b, c), up to `SpmReadPorts` per cycle. It writes back with per-lane
-masks and spaces VVECMAT rows so no accumulator is read before the previous row
-wrote it. Reductions take about one word per cycle. The merge pairs canonical tree
+start, then a, b, c), up to `SpmReadPorts` per cycle, and writes back with per-lane
+masks. VVECMAT rows start at least `Latency + 1` cycles apart. An accumulator
+word the SPM read missed is forwarded from the two most recent results. Reductions take about one word per cycle. The merge pairs canonical tree
 nodes level by level and overlaps adds from different levels and rows in one
 pipelined adder.
 With `SfuLanes < VLanes`, a VSFU word is issued as `VLanes/SfuLanes` sub-items,

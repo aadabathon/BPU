@@ -18,7 +18,7 @@ streams from memory.
 | C5 | FVU 2-D ops and Qwen blocks: VVECMAT, per-row scalars, VPERM (RoPE), conv, delta rule, attention | **done** | same, plus the compiled Qwen program |
 | C6 | Compute top: operation stream, QMV ↔ SPM gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
 | C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, formal (QMV, FVU) done; timing and PnR not started |
-| C8 | FVU throughput: pipelined reduction merge, multi-port SPM | **done** | reduce unit test, FVU + decode bit-exact; 54.5 → 80.9 tok/s projected (2B, 128 ctx) |
+| C8 | FVU throughput: pipelined reduction merge, multi-port SPM, VVECMAT forwarding | **done** | reduce unit test, FVU + decode bit-exact; 54.5 → 89.4 tok/s projected (2B, 128 ctx) |
 
 ## Qwen3.5-2B coverage
 
@@ -35,13 +35,16 @@ checked bit-exact on the RTL:
 ## Next, in priority order
 
 1. **Performance** (see [performance.md](performance.md)). The fpga RTL projects to
-   81 / 40 / 15 tok/s on Qwen3.5-2B at 128 / 2K / 8K context. The pipelined merge
-   and the 3-port SPM are done. Remaining:
-   * attention on QMV with an INT8 KV cache: 124 / 84 / 78 tok/s. The QMV W8 mode
+   89 / 42 / 16 tok/s on Qwen3.5-2B at 128 / 2K / 8K context. The pipelined
+   merge, the 3-port SPM and VVECMAT forwarding are done. Remaining:
+   * attention on QMV with an INT8 KV cache: 124 / 94 / 86 tok/s. The QMV W8 mode
      already computes it; it needs an ml-models accuracy check and a KV layout
      from rtl-memory;
-   * VVECMAT accumulator forwarding: about +10% at short context;
-   * a fused delta-rule op.
+   * a wider FVU: 32 lanes → 118 / 68 / 29 tok/s, 64 lanes → 137 / 87 / 40 (a
+     parameter; the 64-lane `wide` configuration is verified in simulation);
+   * a fused delta-rule op (two passes over each head's state instead of four).
+     It needs a local VVECMAT accumulator, because otherwise the single SPM write
+     port limits it.
 2. **Timing closure.**
    * Out-of-context Vivado runs at 250 MHz for `bpu_qmv_slice` (fpga config) and `bpu_fvu_lane`.
    * OpenLane 2 on sky130 for the asic config.
@@ -51,17 +54,38 @@ checked bit-exact on the RTL:
    * fusing int→fp32 with the QMV product multiplier (bit-identical);
    * sizing the SPM for the chosen tapeout model.
 
-   Current estimate: 0.44 mm² sky130 logic plus SRAM macros (performance.md).
-4. **FVU formal:** BMC and covers pass. The unbounded PDR proof converges on all
-   but one property in 40 minutes (see verification.md).
-5. **Streaming operands for full-size tensors.** A real 2B model's KV cache and
-   128×128 states per head exceed an on-chip SPM, so the FVU needs a streaming
-   operand port or tiling support in the compiler.
+   Current estimate: 0.43 mm² sky130 logic plus SRAM macros (performance.md).
+4. **FVU formal:** BMC and covers pass. Unbounded PDR proves 7 of 8 properties in
+   about a minute. The open one is the merge-level bound: a parked node always
+   has a register. It needs an invariant tying pending tree levels to each row's
+   word count (see verification.md).
+5. **Capacity: where the 2B model's state lives.** The tiny model fits the SPM; the
+   2B model does not. In fp32:
+   * DeltaNet state: 18 layers × 16 heads × 128×128 = 18.9 MB;
+   * KV cache: 24 KB per position = 3.1 MB at 128, 50 MB at 2K, 201 MB at 8K context.
+
+   F2's VU47P has about 34 MB of UltraRAM plus 9 MB of block RAM. Two workable
+   plans, both needing rtl-memory:
+   * **(A) States on chip, KV in HBM.** A ~20 MB SPM (one copy) holds the DeltaNet
+     states. The KV cache stays in HBM and attention runs on QMV (INT8 KV), which
+     streams it exactly like weights. The QMV side needs no new RTL. What's
+     missing: the numerics decision and a DMA path for the KV append.
+   * **(B) Stream everything.** The FVU gets a streaming operand port: the
+     sequencer stalls issue until a stream beat is ready, and the lanes never stall.
+     Per token, DeltaNet state traffic is about 113 MB (four reads and two writes of
+     18.9 MB), about 0.3 ms at HBM rates, so bandwidth is not the limit. This is
+     the natural plan for a tapeout with no large SRAM.
+
+   Read ports at that capacity: replication (`SpmReadPorts`, done) multiplies
+   memory, so a 20 MB SPM would use one copy. Region banking would give ports
+   without copies. However, rows of one op can then issue at different rates, so
+   VVECMAT needs per-item accumulator hazard tracking instead of the current
+   row spacing. Decide after (A) versus (B).
 
 ## Tapeout track
 
 * **Candidate:** `bpu_compute_top` at the asic configuration: 1 QMV slice × 16
-  lanes and a 2-lane FVU with one shared SFU. That is about 0.44 mm² of sky130
+  lanes and a 2-lane FVU with one shared SFU. That is about 0.43 mm² of sky130
   logic (pre-layout, typical corner) plus SRAMs, running the tiny model bit-exact
   against the FPGA build and the reference.
 * **Early learning run:** `bpu_qmv_dot` + `bpu_fp32_*` at a tiny configuration on a

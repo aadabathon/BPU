@@ -99,6 +99,10 @@ def directed_ops():
             for f in range(5) if op == F.VSFU else [0]:
                 ops.append(F.FvuOp(op, 2, 67, d=D + 512, d_stride=128, a_stride=128, b_stride=128,
                                    c_stride=128, s_stride=1, t_stride=2, func=f, **base))
+    # VVECMAT with many short rows: accumulator reads race the previous row's writes,
+    # so every forwarding case (and none) occurs across the configurations.
+    for cols in (1, V, 2 * V + 1, 3 * V, 64):
+        ops.append(F.FvuOp(F.VVECMAT, 8, cols, d=D + 640, a=0, a_stride=64, s=VEC_END + 9, s_stride=1))
     # In-place partial-row update (RoPE-style): only the first 16 of 64 elements change.
     ops.append(F.FvuOp(F.VMULS, 2, 16, d=0, a=0, s=VEC_END + 7, d_stride=64, a_stride=64))
     return ops

@@ -9,12 +9,12 @@ stream (position 1):
 
 | Configuration | QMV | FVU | Cycles / token |
 |---|---|---|---|
-| fpga | 32 slices × 64 lanes | 16 lanes, 4 shared SFUs, 3 SPM read ports | 29,867 |
+| fpga | 32 slices × 64 lanes | 16 lanes, 4 shared SFUs, 3 SPM read ports | 26,077 |
 | asic | 1 × 16 | 2 lanes, 1 shared SFU, 1 read port | 179,839 |
 | tiny | 3 × 4 | 4 lanes, 2 shared SFUs, 2 read ports, combinational | 117,315 |
 
-Before the pipelined reduction merge and the multi-port SPM (serial merge, one
-read port), the same stream took 34,038 / 182,578 / 139,787 cycles. Sharing SFUs
+Before the pipelined reduction merge, the multi-port SPM and VVECMAT accumulator
+forwarding, the same stream took 34,038 / 182,578 / 139,787 cycles. Sharing SFUs
 cost 1–4% of the cycles when it was introduced (see Area and timing).
 
 ## Cycle model
@@ -24,12 +24,12 @@ cost 1–4% of the cycles when it was introduced (see Area and timing).
 - the reduction merge rate (about 1.08 cycles per word node, measured by
   `tb/cocotb_fvu_reduce.py`) and the reduction credit loop
   (`RedFifoDepth` credits per lane-pipeline + lane-tree + 4 cycles);
-- VVECMAT row spacing;
+- VVECMAT row spacing (`Latency + 1` cycles, with accumulator forwarding);
 - the QMV gearbox, beats per slice, and pipeline tails.
 
 | Configuration | Measured | Modelled | Error |
 |---|---|---|---|
-| fpga | 29,867 | 29,136 | −2.4% |
+| fpga | 26,077 | 25,346 | −2.8% |
 | asic | 179,839 | 180,167 | +0.2% |
 | tiny | 117,315 | 117,102 | −0.2% |
 
@@ -43,17 +43,31 @@ the calibrated model. It assumes weights arrive at one beat per cycle per slice
 |---|---|---|---|
 | First RTL (1 read port, serial reduction merge) | 54.5 | 15.1 | 4.6 |
 | 1 read port, pipelined merge (the asic shape) | 60.5 | 24.6 | 8.5 |
-| **Current fpga RTL (3 read ports, pipelined merge)** | **80.9** | **40.3** | **15.4** |
-| + attention K·q and pᵀV on the QMV engine (INT8 KV) | 123.6 | 84.4 | 78.0 |
+| **Current fpga RTL (3 read ports, pipelined merge, VVECMAT forwarding)** | **89.4** | **42.3** | **15.7** |
+| + attention K·q and pᵀV on the QMV engine (INT8 KV) | 123.6 | 93.6 | 85.9 |
 
-Where the current fpga RTL spends a 2K-context token (6.2M cycles):
+**FVU width** is the next lever and needs no new RTL. `VLanes` goes up to 64, and
+the `wide` FVU configuration (64 lanes, 16 shared SFUs, 3 read ports) is verified
+in simulation like the others. Projected tokens/s:
 
-| Work | Cycles |
-|---|---|
-| VVECMAT (attention pᵀV, DeltaNet state reads) | 2.46M |
-| Reductions (attention scores: one RDOT row per position per head) | 1.76M |
-| Element-wise (DeltaNet state decay/update, norms, SiLU…) | 1.02M |
-| QMV | 0.97M |
+| FVU lanes | 128 ctx | 2K ctx | 8K ctx | + attention on QMV (128 / 2K / 8K) |
+|---|---|---|---|---|
+| 16 (fpga) | 89.4 | 42.3 | 15.7 | 123.6 / 93.6 / 85.9 |
+| 32 | 118.1 | 68.0 | 28.8 | 164.3 / 121.0 / 112.4 |
+| 64 (wide) | 136.5 | 86.6 | 39.9 | 196.8 / 138.8 / 130.4 |
+
+Whether 64 lanes fit F2 at 250 MHz alongside 32 QMV slices is a Vivado question.
+It is roughly 64 fp32 multipliers and adders, 16 SFUs, and 3 SPM copies 2048 bits wide.
+
+Where the current fpga RTL spends a token:
+
+| Work | 128 ctx | 2K ctx |
+|---|---|---|
+| Element-wise (DeltaNet state decay/update, norms, SiLU…) | 0.98M | 1.02M |
+| QMV | 0.97M | 0.97M |
+| VVECMAT (DeltaNet state reads, attention pᵀV) | 0.70M | 2.17M |
+| Reductions (attention scores: one RDOT row per position per head) | 0.15M | 1.76M |
+| **Total** | **2.80M** | **5.92M** |
 
 **The QMV engine is not the bottleneck.** At 0.97M cycles/token it alone would
 allow ~260 tok/s, close to the 272 tok/s MAC bound (2048 MACs/cycle vs 1.88G MACs/token).
@@ -61,18 +75,19 @@ The vector unit is the bottleneck. Remaining steps, in order of payoff:
 
 1. **Move attention onto QMV.** Store the KV cache as INT8 with per-group scales
    (a numerics decision: it needs an accuracy check by ml-models). Then K·q is a
-   QMV op over the cache and pᵀV is QMV with Vᵀ. This is what makes long context
-   viable.
-2. **Forward the VVECMAT accumulator** inside the lane pipeline instead of through
-   the SPM. Rows are spaced by `Ltot + 6` cycles today so each row reads the
-   accumulator after the previous row wrote it. DeltaNet state rows are 8 words
-   at 16 lanes, so they wait on that spacing.
-3. **A fused delta-rule op** that reads each head's 128×128 state once instead of
-   four times.
+   QMV op over the cache and pᵀV is QMV with Vᵀ; the QMV W8 mode already computes
+   both. This is what makes long context viable.
+2. **Widen the FVU** (above).
+3. **A fused delta-rule op**: two passes over each head's 128×128 state instead of
+   four (decay + Sᵀk, then rank-1 update + Sᵀq). DeltaNet state traffic is 43% of
+   a 128-context token. It needs a small local VVECMAT accumulator, because each
+   fused item would otherwise write both the state and the accumulator through the
+   single SPM write port.
 
-None of these changes a result bit, except attention-on-QMV, which changes the
-KV format. The pipelined merge and the read ports (done) did not change any bit
-either: the RTL stays bit-exact with `bpuref` at every configuration.
+A fused delta-rule op can keep every result bit (the same operations in the same
+order). Attention-on-QMV changes the KV format.
+The pipelined merge, the read ports and VVECMAT forwarding (all done) changed no
+bits either: the RTL stays bit-exact with `bpuref` at every configuration.
 
 **Reduction FIFO sizing.** Every reduction word holds a credit from issue until
 the merge pops it, a loop of about `Ltot + log2(VLanes)·AddLatency + 4` cycles
@@ -91,12 +106,15 @@ Useful for sizing a tapeout, not for sign-off.
 |---|---|---|---|
 | `bpu_qmv_slice` (16 lanes) | 0.111 mm² | 18,951 | 20.7 ns |
 | `bpu_sfu` | 0.134 mm² | 25,236 | 19.7 ns |
-| `bpu_fvu` (2 lanes, 1 shared SFU) | 0.305 mm² | 49,615 | ~30–35 ns |
-| `bpu_compute_top` (asic, 1 shared SFU) | **0.437 mm²** | 70,906 | ~24–28 ns |
+| `bpu_fvu` (2 lanes, 1 shared SFU) | 0.319 mm² | 51,734 | ~27–35 ns |
+| `bpu_compute_top` (asic, 1 shared SFU) | **0.428 mm²** | 68,067 | ~24–31 ns |
 | (before the pipelined merge's narrower FIFO) | 0.458 mm² | 72,202 | |
 | (same with one SFU per lane, before) | 0.575 mm² | 94,376 | |
 
-So the compute logic of the tapeout candidate is about **0.44 mm²** plus SRAM
+ABC's results move by a few percent from run to run and with small RTL changes.
+Read these as ±5%.
+
+So the compute logic of the tapeout candidate is about **0.43 mm²** plus SRAM
 macros for the SPM and the QMV activation buffer, which fits comfortably in a
 Caravel-class ~10 mm² user area. The asic pipelining settings reach roughly
 30–40 MHz before wires. Deeper pipeline settings (the same parameters the fpga
@@ -109,8 +127,8 @@ configuration uses) trade flops for clock.
 | `bpu_qmv_slice` | 14.7K | 887 |
 | `bpu_qmv_array` (1 slice) | 16.3K | 1,145 |
 | `bpu_sfu` | 17.9K | 197 |
-| `bpu_fvu` (2 lanes, per-lane SFUs) | 63.3K | 3,436 |
-| `bpu_compute_top` (per-lane SFUs) | 79.4K | 4,090 |
+| `bpu_fvu` (2 lanes, 1 shared SFU) | 44.5K | 2,761 |
+| `bpu_compute_top` (1 shared SFU) | 61.8K | 3,991 |
 
 **SFU sharing** (`SfuLanes`): the SFU is the largest per-lane cost. Sharing one
 SFU across the asic configuration's two FVU lanes saves 20% of the compute top's

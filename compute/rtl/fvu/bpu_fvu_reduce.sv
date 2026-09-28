@@ -44,9 +44,8 @@ module bpu_fvu_reduce #(
   // ---------------------------------------------------------------------------
   // Word stage: lane tree (sum) and lane max
   // ---------------------------------------------------------------------------
-  logic [Lanes*32-1:0] sum_in;
+  logic [Lanes*32-1:0] sum_in, keys;
   logic [31:0]         node_sum;
-  logic [31:0]         wkey;
 
   for (genvar l = 0; l < Lanes; l++) begin : g_mask
     assign sum_in[l*32 +: 32] = in_mask_i[l] ? in_vals_i[l*32 +: 32] : 32'd0;
@@ -55,28 +54,31 @@ module bpu_fvu_reduce #(
   bpu_fvu_sumtree #(.N(Lanes), .AddPipe(AddPipe)) u_tree (
     .clk_i, .rst_ni, .in_i(sum_in), .sum_o(node_sum));
 
-  // Word max as a balanced tree over order keys. Equal keys mean equal bits and
-  // the key is invertible, so only the key travels on (0: masked or NaN).
-  logic [Lanes-1:0][31:0] mk;
-  always_comb begin
-    for (int l = 0; l < Lanes; l++)
-      mk[l] = in_mask_i[l] ? f32_order_key(in_vals_i[l*32 +: 32]) : 32'd0;
-    for (int s = 1; s < Lanes; s = s * 2)
-      for (int l = 0; l + s < Lanes; l = l + 2 * s)
-        if (mk[l+s] > mk[l]) mk[l] = mk[l+s];
-    wkey = mk[0];
+  // Word max: a balanced tree over order keys (0: masked lane or NaN), registered
+  // per level when the adder tree is pipelined, then padded to the tree latency.
+  // Equal keys mean equal bits and the key is invertible, so only the key travels on.
+  localparam bit          MReg = (La > 0);
+  localparam int unsigned Lmx  = $clog2(Lanes) * int'(MReg);
+
+  for (genvar l = 0; l < Lanes; l++) begin : g_key
+    assign keys[l*32 +: 32] = in_mask_i[l] ? f32_order_key(in_vals_i[l*32 +: 32]) : 32'd0;
   end
 
   logic             t_valid;
   logic             t_max, t_first, t_last;
   logic [AW-1:0]    t_dest;
-  logic [31:0]      t_key;
+  logic [31:0]      mt_key, t_key;
+
+  bpu_fvu_maxtree #(.N(Lanes), .W(32), .RegLevels(MReg)) u_mtree (
+    .clk_i, .rst_ni, .in_i(keys), .max_o(mt_key));
+  bpu_delay #(.Width(32), .Depth(Lt - Lmx)) u_dk (
+    .clk_i, .rst_ni, .d_i(mt_key), .q_o(t_key));
 
   bpu_delay #(.Width(1), .Depth(Lt), .Reset(1'b1)) u_dv (
     .clk_i, .rst_ni, .d_i(in_valid_i), .q_o(t_valid));
-  bpu_delay #(.Width(3 + AW + 32), .Depth(Lt)) u_dm (
-    .clk_i, .rst_ni, .d_i({in_max_i, in_first_i, in_last_i, in_dest_i, wkey}),
-    .q_o({t_max, t_first, t_last, t_dest, t_key}));
+  bpu_delay #(.Width(3 + AW), .Depth(Lt)) u_dm (
+    .clk_i, .rst_ni, .d_i({in_max_i, in_first_i, in_last_i, in_dest_i}),
+    .q_o({t_max, t_first, t_last, t_dest}));
 
   // Items inside the tree pipeline (for busy_o).
   logic [$clog2(Lt+2)-1:0] tree_cnt_q;
@@ -252,6 +254,8 @@ module bpu_fvu_reduce #(
   always @(posedge clk_i) begin
     if (rst_ni && t_valid && !fifo_ready)
       $error("bpu_fvu_reduce: input FIFO overflow (credit accounting broken)");
+    if (rst_ni && r_keep && 32'(r_lvl) >= NLvl)
+      $error("bpu_fvu_reduce: row longer than 2^MaxColsLog2 elements (merge level %0d)", r_lvl);
   end
   /* verilator lint_on SYNCASYNCNET */
 `endif

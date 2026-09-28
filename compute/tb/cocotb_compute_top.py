@@ -14,6 +14,7 @@ import busmodels as bm
 from bpuref import fvu as F
 from bpuref.configs import TOP_CONFIGS
 from bpuref.fp import f32_equal
+from bpuref.perf import CycleModel
 from bpuref.qmv import pack_array_streams
 from bpuref.qwen import TINY, BpuQwen, QmvOp, quantize, random_weights
 
@@ -160,3 +161,9 @@ async def tiny_qwen_decode(dut):
         dut._log.info(f"[{CFG.name}] step {step}: token {tok} -> {rtl_tok}; "
                       f"{len(ops)} ops ({n_q} QMV) bit-exact, whole SPM matches; "
                       f"{cycles} cycles for the op stream")
+        # The cycle model behind the 2B projection must track the RTL (weights arrive
+        # at 0.9 beats/cycle here: the memory side idles 10% of cycles).
+        model = CycleModel(CFG, beat_rate=0.9).program(ops, qw)["total"]
+        err = model / cycles - 1
+        dut._log.info(f"[{CFG.name}] step {step}: cycle model {model} ({100 * err:+.1f}%)")
+        assert abs(err) < 0.05, f"cycle model off by {100 * err:+.1f}%: recalibrate bpuref/perf.py"

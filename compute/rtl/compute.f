@@ -15,6 +15,7 @@ sfu/bpu_sfu.sv
 fvu/bpu_fvu_qround.sv
 fvu/bpu_fvu_lane.sv
 fvu/bpu_fvu_sumtree.sv
+fvu/bpu_fvu_maxtree.sv
 fvu/bpu_fvu_reduce.sv
 fvu/bpu_fvu.sv
 qmv/bpu_add_tree.sv

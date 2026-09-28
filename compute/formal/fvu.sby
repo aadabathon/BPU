@@ -27,9 +27,9 @@ bmc_p2: smtbmc yices
 cover: smtbmc yices
 
 [script]
-small: read_slang -DFORMAL --top bpu_fvu_fv bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
-bmc_p2:    read_slang -DFORMAL --top bpu_fvu_fv -G SpmReadPorts=2 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
-cover:     read_slang -DFORMAL --top bpu_fvu_fv -G VLanes=16 -G SpmWords=8 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
+small: read_slang -DFORMAL --top bpu_fvu_fv bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_maxtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
+bmc_p2:    read_slang -DFORMAL --top bpu_fvu_fv -G SpmReadPorts=2 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_maxtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
+cover:     read_slang -DFORMAL --top bpu_fvu_fv -G VLanes=16 -G SpmWords=8 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w_be.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_sfu_rom_pkg.sv bpu_sfu_rom.sv bpu_sfu.sv bpu_fvu_qround.sv bpu_fvu_lane.sv bpu_fvu_sumtree.sv bpu_fvu_maxtree.sv bpu_fvu_reduce.sv bpu_fvu.sv bpu_fvu_fv.sv
 prep -top bpu_fvu_fv
 cutpoint t:bpu_fvu_lane* t:bpu_sram_1r1w_be* t:bpu_fvu_sumtree* */u_merge_add
 flatten
@@ -51,6 +51,7 @@ opt_clean
 ../rtl/fvu/bpu_fvu_qround.sv
 ../rtl/fvu/bpu_fvu_lane.sv
 ../rtl/fvu/bpu_fvu_sumtree.sv
+../rtl/fvu/bpu_fvu_maxtree.sv
 ../rtl/fvu/bpu_fvu_reduce.sv
 ../rtl/fvu/bpu_fvu.sv
 bpu_fvu_fv.sv

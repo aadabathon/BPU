@@ -39,6 +39,7 @@ lint bpu_fvu -GVLanes=16 -GSpmWords=4096 -GSfuLanes=4 -GSpmReadPorts=3          
 lint bpu_fvu -GVLanes=2 -GSpmWords=1024 -GSfuLanes=1 "-GMulPipe=3'b010" "-GAddPipe=3'b010" "-GSfuPipe=5'b01010"  # asic
 lint bpu_fvu -GVLanes=4 -GSpmWords=512 -GSfuLanes=2 -GSpmReadPorts=2 "-GMulPipe=3'b000" "-GAddPipe=3'b000" "-GSfuPipe=5'b00000"   # tiny
 lint bpu_fvu -GVLanes=4 -GSpmWords=512                                               # one SFU per lane
+lint bpu_fvu -GVLanes=64 -GSpmWords=256 -GSfuLanes=16 -GSpmReadPorts=3 -GRedFifoDepth=32   # wide
 lint bpu_fvu_reduce -GLanes=1 "-GAddPipe=3'b101"                                     # reduction edge shapes
 lint bpu_fvu_reduce -GLanes=16 "-GAddPipe=3'b000"
 
