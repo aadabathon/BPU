@@ -53,27 +53,14 @@ jobs:
           compute/scripts/soak_fp32.sh 20000000
           compute/scripts/soak_sfu.sh
 
-      - name: Synthesis (Yosys, generic cells)
-        env:
-          BPU_SYNTH_OUT: ${{ runner.temp }}/synth
-        run: compute/scripts/synth_yosys.sh slice-asic array-asic sfu
-
-  gates:
-    # Gate-level simulation of synthesized netlists (slow): manual runs only.
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      - uses: YosysHQ/setup-oss-cad-suite@v4
-        with:
-          version: "2026-09-27"
-          python-override: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: python3 -m pip install numpy
-      - name: Gate-level simulation
+      - name: Gate-level simulation (Yosys netlists, unchanged cocotb tests)
         working-directory: compute
         env:
           BPU_GATES: "1"
           BPU_BUILD_ROOT: ${{ runner.temp }}/bpu_build
         run: python3 -m pytest -q tb/test_gates.py
+
+      - name: Synthesis (Yosys, generic cells)
+        env:
+          BPU_SYNTH_OUT: ${{ runner.temp }}/synth
+        run: compute/scripts/synth_yosys.sh slice-asic array-asic sfu

@@ -2,8 +2,8 @@
 
 Every claim in these docs and the command that reproduces it. Run from `compute/`
 with the OSS CAD Suite environment sourced (`source ~/tools/oss-cad-suite/environment`).
-CI (`.github/workflows/compute.yml`) runs all of it except gate-level simulation
-and the Hugging Face check.
+CI (`.github/workflows/compute.yml`) runs all of it except the Hugging Face check
+and the unbounded FVU proof (about an hour).
 
 | Claim | Evidence | Command |
 |---|---|---|
