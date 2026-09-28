@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from cocotb_tools.runner import get_runner
 
-from bpuref.configs import QMV_SLICE_CONFIGS
+from bpuref.configs import QMV_ARRAY_CONFIGS, QMV_SLICE_CONFIGS
 
 COMPUTE = Path(__file__).resolve().parents[1]
 RTL = COMPUTE / "rtl"
@@ -57,7 +57,18 @@ def test_fp32(op: str, pipe: int) -> None:
         {"BPU_FP_OP": op})
 
 
+@pytest.mark.parametrize("pipe", [0b11111, 0b00000, 0b01010])
+def test_sfu(pipe: int) -> None:
+    run("bpu_sfu", "cocotb_sfu", {"PipeMask": f"5'b{pipe:05b}"}, f"p{pipe:05b}", {})
+
+
 @pytest.mark.parametrize("cfg", list(QMV_SLICE_CONFIGS))
 def test_qmv_slice(cfg: str) -> None:
     run("bpu_qmv_slice", "cocotb_qmv_slice", QMV_SLICE_CONFIGS[cfg].hdl_parameters(), cfg,
+        {"BPU_QMV_CFG": cfg})
+
+
+@pytest.mark.parametrize("cfg", list(QMV_ARRAY_CONFIGS))
+def test_qmv_array(cfg: str) -> None:
+    run("bpu_qmv_array", "cocotb_qmv_array", QMV_ARRAY_CONFIGS[cfg].hdl_parameters(), cfg,
         {"BPU_QMV_CFG": cfg})

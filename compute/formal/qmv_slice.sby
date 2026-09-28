@@ -1,0 +1,53 @@
+# Protocol and credit proofs for bpu_qmv_slice. The arithmetic units are cut out
+# (their outputs become free values): the properties are about control and must
+# hold for any data.
+#   prove*: unbounded (IC3/PDR) with the output FIFO at its minimum depth
+#          (= RowInterleave), i.e. maximum credit pressure: 64 lanes x R=2 and R=4,
+#          and 16 lanes x R=1 (multi-chunk groups, like the asic config).
+#   bmc:   40 cycles from reset at a 4-lane config (multi-chunk groups).
+#   cover: reachability (results flow; back-to-back commands).
+#   cd compute/formal && sby -f qmv_slice.sby
+[tasks]
+prove
+prove_r4
+prove_r1
+bmc
+cover
+
+[options]
+prove prove_r4 prove_r1: mode prove
+bmc: mode bmc
+bmc: depth 40
+cover: mode cover
+cover: depth 16
+
+[engines]
+prove prove_r4 prove_r1: abc pdr
+bmc: smtbmc yices
+cover: smtbmc yices
+
+[script]
+prove: read_slang -DFORMAL --top bpu_qmv_slice_fv -G Lanes=64 -G RowInterleave=2 -G MaxK=128 -G RowBlkW=2 -G OutFifoDepth=2 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_slice.sv bpu_qmv_slice_fv.sv
+prove_r4: read_slang -DFORMAL --top bpu_qmv_slice_fv -G Lanes=64 -G RowInterleave=4 -G MaxK=128 -G RowBlkW=2 -G OutFifoDepth=4 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_slice.sv bpu_qmv_slice_fv.sv
+prove_r1: read_slang -DFORMAL --top bpu_qmv_slice_fv -G Lanes=16 -G RowInterleave=1 -G MaxK=128 -G RowBlkW=2 -G OutFifoDepth=1 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_slice.sv bpu_qmv_slice_fv.sv
+cover: read_slang -DFORMAL --top bpu_qmv_slice_fv -G Lanes=64 -G RowInterleave=2 -G MaxK=128 -G RowBlkW=2 -G OutFifoDepth=2 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_slice.sv bpu_qmv_slice_fv.sv
+bmc:   read_slang -DFORMAL --top bpu_qmv_slice_fv -G Lanes=4 -G RowInterleave=2 -G MaxK=128 -G RowBlkW=3 bpu_compute_pkg.sv bpu_delay.sv bpu_lzc_pow2.sv bpu_lzc.sv bpu_fifo.sv bpu_sram_1r1w.sv bpu_fp32_mul.sv bpu_fp32_add.sv bpu_int2fp32.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_slice.sv bpu_qmv_slice_fv.sv
+prep -top bpu_qmv_slice_fv
+cutpoint */u_dot */u_i2f */u_scale_mul */u_prod_mul */u_acc_add */u_xbuf */u_xsbuf
+flatten
+opt_clean
+
+[files]
+../rtl/common/bpu_compute_pkg.sv
+../rtl/common/bpu_delay.sv
+../rtl/common/bpu_lzc_pow2.sv
+../rtl/common/bpu_lzc.sv
+../rtl/common/bpu_fifo.sv
+../rtl/common/bpu_sram_1r1w.sv
+../rtl/fp/bpu_fp32_mul.sv
+../rtl/fp/bpu_fp32_add.sv
+../rtl/fp/bpu_int2fp32.sv
+../rtl/qmv/bpu_add_tree.sv
+../rtl/qmv/bpu_qmv_dot.sv
+../rtl/qmv/bpu_qmv_slice.sv
+bpu_qmv_slice_fv.sv

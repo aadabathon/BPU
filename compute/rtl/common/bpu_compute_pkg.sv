@@ -25,7 +25,22 @@ package bpu_compute_pkg;
   // Canonical quiet NaN produced by every fp32 unit.
   localparam logic [31:0] Fp32QNaN = 32'h7fc0_0000;
 
+  // Special-function unit function codes (bpuref.sfu: RCP, RSQRT, EXP2, EXP, LOG2).
+  localparam logic [2:0] SfuRcp   = 3'd0;
+  localparam logic [2:0] SfuRsqrt = 3'd1;
+  localparam logic [2:0] SfuExp2  = 3'd2;
+  localparam logic [2:0] SfuExp   = 3'd3;
+  localparam logic [2:0] SfuLog2  = 3'd4;
+
   /* verilator lint_on UNUSEDPARAM */
+
+  // Argmax ordering (bpuref.qmv.f32_order_key): an unsigned key where
+  // -inf < ... < -0 < +0 < ... < +inf, and every NaN ranks below -inf.
+  function automatic logic [31:0] f32_order_key(input logic [31:0] b);
+    if (b[30:23] == 8'hff && b[22:0] != '0) f32_order_key = 32'd0;
+    else if (b[31])                          f32_order_key = ~b;
+    else                                     f32_order_key = b | 32'h8000_0000;
+  endfunction
 
   // ---------------------------------------------------------------------------
   // Latency helpers, so parents can size their delay lines

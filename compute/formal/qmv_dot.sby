@@ -1,0 +1,25 @@
+# bpu_qmv_dot == the textbook dot product, for all inputs, in both weight formats.
+# Every lane is the same generated logic; wider builds are covered by simulation
+# (SAT equivalence of sums of products grows steeply: 16 lanes runs > 10 min).
+#   cd compute/formal && sby -f qmv_dot.sby
+[tasks]
+lanes4
+lanes2
+
+[options]
+mode bmc
+depth 1
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+lanes4:  read_slang -DFORMAL --top bpu_qmv_dot_fv -G Lanes=4  bpu_compute_pkg.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_dot_fv.sv
+lanes2:  read_slang -DFORMAL --top bpu_qmv_dot_fv -G Lanes=2  bpu_compute_pkg.sv bpu_add_tree.sv bpu_qmv_dot.sv bpu_qmv_dot_fv.sv
+prep -top bpu_qmv_dot_fv
+
+[files]
+../rtl/common/bpu_compute_pkg.sv
+../rtl/qmv/bpu_add_tree.sv
+../rtl/qmv/bpu_qmv_dot.sv
+bpu_qmv_dot_fv.sv

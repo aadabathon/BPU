@@ -58,6 +58,16 @@ class QmvSliceConfig:
         return params
 
 
+@dataclass(frozen=True)
+class QmvArrayConfig:
+    name: str
+    nslice: int
+    slice: QmvSliceConfig
+
+    def hdl_parameters(self) -> dict[str, int | str]:
+        return {"NSlice": self.nslice, **self.slice.hdl_parameters()}
+
+
 QMV_SLICE_CONFIGS = {
     # AWS F2: one 256-bit HBM beat (64 int4 codes = one group) per cycle at ~250 MHz.
     "fpga": QmvSliceConfig("fpga", lanes=64, row_interleave=4, max_k=6144),
@@ -71,3 +81,12 @@ QMV_SLICE_CONFIGS = {
 
 for _cfg in QMV_SLICE_CONFIGS.values():
     _cfg.validate()
+
+QMV_ARRAY_CONFIGS = {
+    # F2: one slice per HBM pseudo-channel.
+    "fpga": QmvArrayConfig("fpga", nslice=32, slice=QMV_SLICE_CONFIGS["fpga"]),
+    # Tapeout: a single slice.
+    "asic": QmvArrayConfig("asic", nslice=1, slice=QMV_SLICE_CONFIGS["asic"]),
+    # Non-power-of-two slice count exercises the round-robin merge and argmax reduce.
+    "tiny": QmvArrayConfig("tiny", nslice=3, slice=QMV_SLICE_CONFIGS["tiny"]),
+}

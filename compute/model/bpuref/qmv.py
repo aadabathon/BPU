@@ -85,6 +85,30 @@ def pack_weight_stream(w_codes, w_scales, lanes: int, row_interleave: int, wfmt:
     return beats, scales
 
 
+def f32_order_key(y) -> np.ndarray:
+    """Total-order key for argmax: -inf < ... < -0 < +0 < ... < +inf, and every NaN
+    ranks below -inf (so a NaN is only chosen when all values are NaN)."""
+    b = np.asarray(y, dtype=np.float32).view(np.uint32).astype(np.int64)
+    key = np.where(b >> 31, (~b) & 0xFFFFFFFF, b | 0x80000000)
+    return np.where(np.isnan(np.asarray(y, dtype=np.float32)), 0, key)
+
+
+def argmax_ref(y) -> int:
+    """Index of the largest value under f32_order_key; ties go to the smallest index."""
+    return int(np.argmax(f32_order_key(y)))   # np.argmax returns the first maximum
+
+
+def pack_array_streams(w_codes, w_scales, nslice: int, lanes: int, row_interleave: int, wfmt: int):
+    """Per-slice layout-L0 streams for bpu_qmv_array: global row n belongs to
+    slice n % nslice, as that slice's local row n // nslice."""
+    w = np.asarray(w_codes)
+    ws = np.asarray(w_scales)
+    if w.shape[0] % (nslice * row_interleave):
+        raise ValueError("N must be a multiple of NSlice * RowInterleave")
+    return [pack_weight_stream(w[s::nslice], ws[s::nslice], lanes, row_interleave, wfmt)
+            for s in range(nslice)]
+
+
 def pack_x_words(x_codes, lanes: int) -> list[int]:
     """Activation buffer words: element k lives in word k // Lanes, byte k % Lanes."""
     x = np.asarray(x_codes, dtype=np.int64)
