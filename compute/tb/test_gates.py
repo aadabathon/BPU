@@ -23,12 +23,13 @@ TARGETS = {
                        {"Lanes": 4, "RowInterleave": 2, "MaxK": 256, "ProdReg": "1'b0",
                         "TreeRegEvery": 1, "I2fReg": "1'b0", "MulPipe": "3'b000", "AddPipe": "3'b000"},
                        "cocotb_qmv_slice", {"BPU_QMV_CFG": "tiny"}),
-    # 2 lanes sharing one SFU (the tapeout shape); combinational units keep the netlist small.
-    # Mapped without ABC (see NO_ABC).
-    "fvu_small": ("bpu_fvu",
-                  {"VLanes": 2, "SfuLanes": 1, "SpmWords": 1024, "MulPipe": "3'b000", "AddPipe": "3'b000",
-                   "SfuPipe": "5'b00000", "RedFifoDepth": 2},
-                  "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_SPM_ELEMS": "2048"}),
+    # The FVU on a shared SRAM (2 lanes sharing one SFU, the tapeout shape): FVU, SRAM
+    # arbiter and banks all at gate level. Combinational units keep the netlist small.
+    "fvu_small": ("bpu_fvu_sys",
+                  {"VLanes": 2, "SfuLanes": 1, "MulPipe": "3'b000", "AddPipe": "3'b000",
+                   "SfuPipe": "5'b00000", "RedFifoDepth": 2, "RdPorts": 2, "NSlot": 4, "WbDepth": 4,
+                   "AccDepth": 4, "NBanks": 4, "BankWords": 512},
+                  "cocotb_fvu", {"BPU_FVU_CFG": "gate", "BPU_FVU_VLANES": "2", "BPU_SPM_ELEMS": "2048"}),
     "fvu_reduce": ("bpu_fvu_reduce", {"Lanes": 2, "AW": 16, "AddPipe": "3'b010", "FifoDepth": 8},
                    "cocotb_fvu_reduce", {"BPU_RED_LANES": "2", "BPU_RED_FIFO": "8", "BPU_RED_ADDPIPE": "2"}),
 }
@@ -42,7 +43,8 @@ NO_ABC = {"fvu_small"}
 def synthesize(name: str, top: str, params: dict, out: Path) -> Path:
     netlist = out / f"{name}.v"
     gparams = " ".join(f"-G{k}={v}" for k, v in params.items())
-    files = " ".join(str(p) for p in rtl_sources())
+    extra = [COMPUTE / "tb" / "hdl" / f"{top}.sv"] if (COMPUTE / "tb" / "hdl" / f"{top}.sv").exists() else []
+    files = " ".join(str(p) for p in rtl_sources() + extra)
     script = f"""
         read_slang -DSYNTHESIS --top {top} {gparams} {files}
         synth -top {top} -flatten{" -noabc" if name in NO_ABC else ""}

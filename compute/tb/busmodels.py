@@ -6,6 +6,7 @@ Sources obey AXI-Stream rules (valid and data held until the handshake).
 """
 
 import cocotb
+import numpy as np
 from cocotb.triggers import ReadOnly, RisingEdge
 
 
@@ -97,3 +98,106 @@ async def pulse(dut, sig):
     sig.value = 1
     await RisingEdge(dut.clk_i)
     sig.value = 0
+
+
+class SramHost:
+    """A host read port and write port on bpu_sram_shared (or a system exposing them):
+    pipelined word reads/writes, and random competing traffic while an op runs.
+    `prefix` names the ports: <prefix>rd_valid_i, <prefix>rd_ready_o, <prefix>rd_addr_i,
+    <prefix>rd_rvalid_o, <prefix>rd_rdata_o, <prefix>wr_valid_i, ... ."""
+
+    def __init__(self, dut, lanes, prefix="host_"):
+        self.dut, self.lanes = dut, lanes
+        g = lambda n: getattr(dut, prefix + n)
+        self.rv, self.rr, self.ra = g("rd_valid_i"), g("rd_ready_o"), g("rd_addr_i")
+        self.rrv, self.rd = g("rd_rvalid_o"), g("rd_rdata_o")
+        self.wv, self.wr, self.wa = g("wr_valid_i"), g("wr_ready_o"), g("wr_addr_i")
+        self.wm, self.wd = g("wr_mask_i"), g("wr_data_i")
+        self.rv.value = 0
+        self.wv.value = 0
+        self.noise_on = False
+
+    def pack(self, bits32):
+        word = 0
+        for l, b in enumerate(bits32):
+            word |= int(b) << (32 * l)
+        return word
+
+    async def write_words(self, base, words, masks=None):
+        full = (1 << self.lanes) - 1
+        i = 0
+        while i < len(words):
+            self.wv.value, self.wa.value = 1, base + i
+            self.wm.value = full if masks is None else masks[i]
+            self.wd.value = words[i]
+            await ReadOnly()
+            acc = self.wr.value == 1
+            await RisingEdge(self.dut.clk_i)
+            if acc:
+                i += 1
+        self.wv.value = 0
+
+    async def write_elems(self, base_elem, values):
+        """fp32 values (or uint32 bits) at an element address (word-aligned base)."""
+        bits = np.asarray(values).view(np.uint32) if np.asarray(values).dtype != np.uint32 else values
+        V = self.lanes
+        assert base_elem % V == 0
+        n = -(-len(bits) // V)
+        words, masks = [], []
+        for w in range(n):
+            chunk = bits[w * V:(w + 1) * V]
+            words.append(self.pack(chunk))
+            masks.append((1 << len(chunk)) - 1)
+        await self.write_words(base_elem // V, words, masks)
+
+    async def read_words(self, base, n):
+        out, i = [], 0
+        while len(out) < n:
+            self.rv.value = int(i < n)
+            self.ra.value = base + min(i, n - 1)
+            await ReadOnly()
+            if self.rrv.value == 1:
+                out.append(int(self.rd.value))
+            acc = i < n and self.rr.value == 1
+            await RisingEdge(self.dut.clk_i)
+            if acc:
+                i += 1
+            if i >= n:
+                self.rv.value = 0
+        return out
+
+    async def read_elems(self, base_elem, n):
+        V = self.lanes
+        words = await self.read_words(base_elem // V, -(-n // V))
+        out = np.zeros(len(words) * V, dtype=np.uint32)
+        for w, word in enumerate(words):
+            for l in range(V):
+                out[w * V + l] = (word >> (32 * l)) & 0xFFFFFFFF
+        return out[:n]
+
+    async def noise(self, rng, rd_words, wr_words, p=0.5):
+        """Until noise_on is cleared: random reads anywhere in rd_words (a range of word
+        addresses) and random full-word writes inside wr_words (memory nobody else uses)."""
+        self.noise_on = True
+        rq = wq = None
+        while self.noise_on or rq is not None or wq is not None:
+            if rq is None and self.noise_on and rng.random() < p:
+                rq = int(rng.integers(rd_words[0], rd_words[1]))
+            if wq is None and self.noise_on and wr_words and rng.random() < p:
+                wq = int(rng.integers(wr_words[0], wr_words[1]))
+            self.rv.value, self.wv.value = int(rq is not None), int(wq is not None)
+            if rq is not None:
+                self.ra.value = rq
+            if wq is not None:
+                self.wa.value, self.wm.value = wq, (1 << self.lanes) - 1
+                self.wd.value = int.from_bytes(rng.bytes(4 * self.lanes), "little")
+            await ReadOnly()
+            racc, wacc = self.rr.value == 1, self.wr.value == 1
+            await RisingEdge(self.dut.clk_i)
+            if rq is not None and racc:
+                rq = None
+            if wq is not None and wacc:
+                wq = None
+        self.rv.value = self.wv.value = 0
+        for _ in range(4):                       # let the last responses drain
+            await RisingEdge(self.dut.clk_i)

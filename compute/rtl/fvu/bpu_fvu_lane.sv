@@ -29,6 +29,7 @@ module bpu_fvu_lane #(
 );
 
   import bpu_compute_pkg::*;
+  import bpu_isa_pkg::*;
 
   localparam logic [4:0] LopAbs = 5'd14;
   localparam int unsigned Lm   = pipe3_latency(MulPipe);

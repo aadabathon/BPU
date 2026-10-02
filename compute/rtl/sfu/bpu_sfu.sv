@@ -23,6 +23,7 @@ module bpu_sfu #(
 );
 
   import bpu_compute_pkg::*;
+  import bpu_isa_pkg::*;
   import bpu_sfu_rom_pkg::*;
 
   localparam logic [2:0] TRcp = 3'd0, TRsqEven = 3'd1, TRsqOdd = 3'd2, TExp2 = 3'd3,
