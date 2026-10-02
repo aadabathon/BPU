@@ -134,4 +134,6 @@ dense sweeps):
 | Activation precision | W4A8, 64-element groups | QMV also supports W8 weights |
 | Scale format | bf16 | E8M0 would turn the scale multiply into an exponent add |
 | Which tensors use W8 | none | per-tensor choice, carried in each QMV op |
-| KV cache precision | fp32 in the SPM | bf16 storage = `VRBF16` + the top 16 bits; INT8 would let attention run on QMV (see performance.md) |
+| KV cache precision | fp32 in the shared SRAM | bf16 storage = `VRBF16` + the top 16 bits; INT8 would let attention run on QMV (see performance.md) |
+| Other formats in the block diagram (Q8.24; INT16 and FP16 in the vector unit) | not implemented | each needs product/accumulator widths, rounding, overflow and conversion rules plus a reference model before RTL; fp32 compute with bf16 storage covers Qwen3.5 |
+| Activation quantization | the compiled FVU sequence (RAMAX, ×fp32(1/127), bf16 scale, SFU rcp, VMULG, VQCLAMP); an all-zero group gets scale 0 and codes 0 | `bpuref.quant.quantize_activations` runs the same sequence |

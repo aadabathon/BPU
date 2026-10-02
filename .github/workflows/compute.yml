@@ -41,9 +41,11 @@ jobs:
 
       - name: Formal (SymbiYosys)
         working-directory: compute/formal
-        # One task at a time: the rIC3 portfolio takes ~10 GB per proof. The unbounded
-        # FVU proof (fvu.sby prove) peaks near 16 GB, more than a hosted runner has: run it locally.
+        # One task at a time: the rIC3 portfolio on the QMV proofs takes ~10 GB. The new
+        # proofs (SRAM, sequencer, FVU) use single-engine IC3 + ABC PDR, which stay small.
         run: |
+          sby --sequential -f sram_shared.sby
+          sby --sequential -f cmd_seq.sby
           sby --sequential -f qmv_slice.sby
           sby --sequential -f qmv_dot.sby
           sby --sequential -f fvu.sby bmc bmc_p2 cover
@@ -65,4 +67,4 @@ jobs:
       - name: Synthesis (Yosys, generic cells)
         env:
           BPU_SYNTH_OUT: ${{ runner.temp }}/synth
-        run: compute/scripts/synth_yosys.sh slice-asic array-asic sfu
+        run: compute/scripts/synth_yosys.sh slice-asic array-asic sfu sram-asic seq

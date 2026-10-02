@@ -229,8 +229,8 @@ module bpu_sram_shared #(
   always_comb begin
     if (rst_ni) begin
       for (int b = 0; b < NBanks; b++) begin
-        assert ($onehot0(rd_gnt[b]));                    // one read and one write per bank
-        assert ($onehot0(wr_gnt[b]));
+        assert ((rd_gnt[b] & (rd_gnt[b] - 1'b1)) == '0);   // one read and one write per bank
+        assert ((wr_gnt[b] & (wr_gnt[b] - 1'b1)) == '0);
         for (int p = 0; p < NRd; p++)
           if (rd_gnt[b][p]) assert (rd_valid_i[p] && rd_in[p] && rd_bank[p] == BI'(b));
         for (int p = 0; p < NWr; p++)

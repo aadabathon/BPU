@@ -17,15 +17,18 @@ mapfile -t files < <(grep -v '^//' compute.f | grep -v '^[[:space:]]*$')
 out="${BPU_SYNTH_OUT:-$here/../synth_out}/sky130"
 mkdir -p "$out"
 
+cfg() { (cd "$here/../model" && python3 -m bpuref.configs --params "$1" "$2"); }
 declare -A top params extra
-top[slice]=bpu_qmv_slice;  params[slice]="-GLanes=16 -GRowInterleave=1 -GMaxK=2048 -GTreeRegEvery=0 -GMulPipe=3'b010 -GAddPipe=3'b010"
-top[sfu]=bpu_sfu;          params[sfu]="-GPipeMask=5'b01010"
-top[fvu]=bpu_fvu;          params[fvu]="-GVLanes=2 -GSfuLanes=1 -GSpmWords=1024 -GMulPipe=3'b010 -GAddPipe=3'b010 -GSfuPipe=5'b01010"
-top[top]=bpu_compute_top;  params[top]="-GMaxK=256 -GSpmWords=1024 -GFSfuLanes=1"
-top[tt]=tt_um_bpu_fp32;    params[tt]=""; extra[tt]="../tapeout/tt/src/tt_um_bpu_fp32.sv"   # Tiny Tapeout run
+top[slice]=bpu_qmv_slice;   params[slice]="$(cfg slice asic)"
+top[sfu]=bpu_sfu;           params[sfu]="-GPipeMask=5'b01010"
+top[fvu]=bpu_fvu;           params[fvu]="$(cfg fvu asic)"
+top[sram]=bpu_sram_shared;  params[sram]="-GNBanks=4 -GBankWords=16384 -GLanes=2 -GNRd=3 -GNWr=3 -GAW=31"
+top[seq]=bpu_cmd_seq;       params[seq]="-GNTags=16 -GQDepth=2"
+top[core]=bpu_core;         params[core]="$(cfg core asic)"
+top[tt]=tt_um_bpu_fp32;     params[tt]=""; extra[tt]="../tapeout/tt/src/tt_um_bpu_fp32.sv"   # Tiny Tapeout run
 
 targets=("$@")
-[ ${#targets[@]} -eq 0 ] && targets=(slice sfu fvu top)
+[ ${#targets[@]} -eq 0 ] && targets=(slice sfu fvu sram seq core)
 
 printf "%-6s %-16s %14s %10s %12s\n" target module "area (um^2)" cells "delay (ps)"
 for t in "${targets[@]}"; do

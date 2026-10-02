@@ -77,3 +77,23 @@ def test_layout_l0_round_trip(lanes, r, wfmt):
     x = rng.integers(-128, 128, k)
     words = pack_x_words(x, lanes)
     assert np.array_equal(np.concatenate([_unpack(wd, 8, lanes) for wd in words]), x)
+
+
+def test_activation_quantizer_is_the_compiled_sequence():
+    """bpuref.quant.quantize_activations == what the compiled FVU program produces."""
+    from bpuref.qwen import TINY, Compiler, quantize, random_weights
+    from bpuref.qwen import run_program
+    w = random_weights(TINY, seed=3)
+    qw = quantize(TINY, w)
+    comp = Compiler(TINY, w, qw)
+    rng = np.random.default_rng(4)
+    x = rng.normal(0, 2, TINY.hidden).astype(np.float32)
+    x[:64] = 0.0                                       # an all-zero group
+    spm = comp.initial_spm()
+    spm[comp.mem["xn"]:comp.mem["xn"] + TINY.hidden] = x
+    ops, codes_at, sc_at = comp._quant(comp.mem["xn"], TINY.hidden)
+    run_program(ops, spm, qw)
+    codes, scales = quantize_activations(x)
+    assert np.array_equal(spm[codes_at:codes_at + TINY.hidden].astype(np.int8), codes)
+    assert np.array_equal(f32_to_bf16(spm[sc_at:sc_at + TINY.hidden // 64]), scales)
+    assert scales[0] == 0 and not codes[:64].any()

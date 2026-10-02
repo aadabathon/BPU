@@ -1,10 +1,13 @@
 # Compute roadmap: Qwen3.5-2B decode
 
-Scope: the RTL that does the arithmetic for every Qwen3.5-2B decode operation.
-It is bit-exact with `bpuref`, runs at the F2 size, and scales down for tapeout.
-Out of scope: DMA/HBM, the command source (ISA/RISC-V/host), and the SoC.
-`bpu_compute_top` defines the seam: an operation stream in, weight requests and
-streams from memory.
+Scope: the compute and shared-memory half of the BPU block diagram. That means the
+vector and matrix units, the shared SRAM with its arbiter, and the command sequencer
+and scoreboard. It is bit-exact with `bpuref`, runs at the F2 size, and scales down
+for tapeout.
+
+Out of scope: the control SoC (it produces descriptors), the memory manager
+(rtl-memory), HBM and the shell. `bpu_core` defines the seams: descriptors in, a
+scoreboard out, and the memory manager's command, SRAM and weight-stream ports.
 
 ## Milestones
 
@@ -12,18 +15,19 @@ streams from memory.
 |---|---|---|---|
 | C0 | Contract + scaffolding: numerics and op specs, `bpuref`, toolchain, config sweeps, lint, synthesis | **done** | docs, `scripts/` |
 | C1 | QMV slice: IEEE fp32 units, W4/W8 × A8 dot, row-interleaved accumulate, credits, flags, counters | **done** | slice tests, formal proofs, fp32 soak, gate-level sim |
-| C2 | QMV array: row striping, in-order merge, argmax (LM head), logical row count | **done** | array tests at 32 / 1 / 3 slices |
+| C2 | QMV array: row striping, in-order merge, argmax (LM head), logical row count | **done** | array tests at 16 / 1 / 3 slices |
 | C3 | SFU: rcp, rsqrt, exp2, exp, log2, bit-exact tables, ≤ 1.44 ulp | **done** | 138M-vector soak, gate-level sim |
-| C4 | FVU core: element-wise, conversions, quantize, canonical reductions, SPM | **done** | FVU tests at 16 / 2 / 4 lanes |
+| C4 | FVU core: element-wise, conversions, quantize, canonical reductions | **done** | FVU tests |
 | C5 | FVU 2-D ops and Qwen blocks: VVECMAT, per-row scalars, VPERM (RoPE), conv, delta rule, attention | **done** | same, plus the compiled Qwen program |
-| C6 | Compute top: operation stream, QMV ↔ SPM gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
-| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim of every engine, unbounded control proofs (QMV, FVU) done; timing and PnR not started |
-| C8 | FVU throughput: pipelined reduction merge, multi-port SPM, VVECMAT forwarding | **done** | reduce unit test, FVU + decode bit-exact; 54.5 → 89.4 tok/s projected (2B, 128 ctx) |
+| C6 | Integrated decode: QMV ↔ memory gearbox, weight requests; full Qwen decode | **done** | tiny-Qwen decode bit-exact, 3 tokens, 3 configs |
+| C7 | Hardening | **partly** | lint, Yosys synthesis, gate-level sim, unbounded control proofs done; timing and PnR not started |
+| C8 | FVU throughput: pipelined reduction merge, VVECMAT forwarding | **done** | reduce unit test, FVU + decode bit-exact |
+| C9 | Shared-SRAM architecture (block diagram): banked shared SRAM, request/response engines, sequencer + scoreboard, `bpu_core` | **done** | SRAM vs a cycle-accurate reference memory, FVU under competing traffic, decode as 443 tagged descriptors bit-exact at 3 configs, formal (SRAM, sequencer, FVU on the SRAM), gate-level FVU + SRAM ([review-response.md](review-response.md)) |
 
 ## Qwen3.5-2B coverage
 
-Every decode operation is implemented, runs in the compiled program, and is
-checked bit-exact on the RTL:
+Every decode operation is implemented, runs in the compiled program, and is checked
+bit-exact on the RTL:
 - all ten projection types and the tied LM head with greedy argmax;
 - embedding dequantize and activation quantize;
 - RMSNorm (`1 + w`) and gated RMSNorm (`w`);
@@ -34,72 +38,60 @@ checked bit-exact on the RTL:
 
 ## Next, in priority order
 
-1. **Performance** (see [performance.md](performance.md)). The fpga RTL projects to
-   89 / 42 / 16 tok/s on Qwen3.5-2B at 128 / 2K / 8K context. The pipelined
-   merge, the 3-port SPM and VVECMAT forwarding are done. Remaining:
-   * attention on QMV with an INT8 KV cache: 124 / 94 / 86 tok/s. The QMV W8 mode
-     already computes it; it needs an ml-models accuracy check and a KV layout
-     from rtl-memory;
-   * a wider FVU: 32 lanes → 118 / 68 / 29 tok/s, 64 lanes → 137 / 87 / 40 (a
-     parameter; the 64-lane `wide` configuration is verified in simulation);
-   * a fused delta-rule op (two passes over each head's state instead of four).
-     It needs a local VVECMAT accumulator, because otherwise the single SPM write
-     port limits it.
-2. **Timing closure.**
-   * Out-of-context Vivado runs at 250 MHz for `bpu_qmv_slice` (fpga config) and `bpu_fvu_lane`.
-   * OpenLane 2 on sky130 for the asic config.
-   * The fp32 multiplier's normalize stage and the adder's post-add shift are the known long paths.
-3. **Area for tapeout.** SFU sharing (`SfuLanes`) is done: −20% compute-top area
-   at the asic configuration. Remaining levers:
-   * fusing int→fp32 with the QMV product multiplier (bit-identical);
-   * sizing the SPM for the chosen tapeout model.
+1. **Capacity: where the 2B model's state lives.** It is the first thing the shared
+   SRAM forces, and it is rtl-memory's design. In fp32:
+   * DeltaNet state: 18 layers × 16 heads × 128×128 = 18 MiB;
+   * KV cache: 24 KiB per position (3 MiB at 128, 48 MiB at 2K context).
 
-   Current estimate: 0.43 mm² sky130 logic plus SRAM macros (performance.md).
-4. **Formal coverage of data.** The control logic of both engines is proven
-   unbounded. Data-dependent correctness (VVECMAT forwarding, the merge's pairing
-   order) rests on bit-exact simulation. A symbolic-data model at a tiny shape
-   would close that gap.
-5. **Capacity: where the 2B model's state lives.** The tiny model fits the SPM; the
-   2B model does not. In fp32:
-   * DeltaNet state: 18 layers × 16 heads × 128×128 = 18.9 MB;
-   * KV cache: 24 KB per position = 3.1 MB at 128, 50 MB at 2K, 201 MB at 8K context.
-
-   F2's VU47P has about 34 MB of UltraRAM plus 9 MB of block RAM. Two workable
-   plans, both needing rtl-memory:
-   * **(A) States on chip, KV in HBM.** A ~20 MB SPM (one copy) holds the DeltaNet
-     states. The KV cache stays in HBM and attention runs on QMV (INT8 KV), which
-     streams it exactly like weights. The QMV side needs no new RTL. What's
-     missing: the numerics decision and a DMA path for the KV append.
-   * **(B) Stream everything.** The FVU gets a streaming operand port: the
-     sequencer stalls issue until a stream beat is ready, and the lanes never stall.
-     Per token, DeltaNet state traffic is about 113 MB (four reads and two writes of
-     18.9 MB), about 0.3 ms at HBM rates, so bandwidth is not the limit. This is
-     the natural plan for a tapeout with no large SRAM.
-
-   Read ports at that capacity: replication (`SpmReadPorts`, done) multiplies
-   memory, so a 20 MB SPM would use one copy. Region banking would give ports
-   without copies. However, rows of one op can then issue at different rates, so
-   VVECMAT needs per-item accumulator hazard tracking instead of the current
-   row spacing. Decide after (A) versus (B).
+   The diagram's 8 MiB SRAM holds neither. The core is ready for either plan, since
+   the memory manager has its own SRAM ports and commands in the sequencer with
+   dependencies:
+   * **(a) stage per layer.** The memory manager streams each layer's state (1 MiB)
+     and KV slice into the SRAM before the layer, and back after. That is about
+     113 MiB of state traffic per token, ~0.3 ms at HBM rates;
+   * **(b) attention on the matrix unit with an INT8 KV cache** streamed like weights,
+     which also lifts long-context speed (below).
+2. **Performance** (see [performance.md](performance.md)). On the diagram's 16 HBM
+   interfaces, the fpga configuration projects 68 / 36 / 15 tok/s at 128 / 2K / 8K
+   context. Weight bandwidth (16 slices) and the vector unit share the time. Levers:
+   * attention on QMV (INT8 KV): 88 / 70 / 64 tok/s. The QMV W8 mode already
+     computes it; it needs an accuracy check by ml-models and a KV layout;
+   * 32 HBM pseudo-channels instead of 16 (if the shell exposes them): 89 / 42 / 15;
+   * a 32-lane FVU: 81 / 53 / 25. The 512 B/cycle SRAM budget caps the vector unit
+     around 32 lanes;
+   * **compiler overlap**: units now run concurrently, but the compiled step reuses
+     a few scratch buffers, so most work is still a dependency chain (about 5%
+     overlap). Double-buffering the scratch regions lets the next projection's
+     load and the current vector work overlap;
+   * a fused delta-rule op with a local accumulator.
+3. **Timing closure.**
+   * Out-of-context Vivado at 250 MHz for `bpu_qmv_slice`, `bpu_fvu_lane`, and the
+     SRAM crossbar (32 banks × 5 read ports at 512 bits is the new wide structure);
+   * OpenLane 2 on sky130 for the asic configuration.
+4. **Area for tapeout.** The asic core is ~0.4 mm² of sky130 logic plus SRAM macros
+   ([performance.md](performance.md)). Remaining levers: SPM/SRAM sizing for the
+   chosen tapeout model, fusing int→fp32 with the QMV product multiplier.
+5. **Formal coverage of data.** The control logic of every block is proven
+   unbounded, and the shared SRAM's data integrity is proven for a symbolic
+   address. The engines' data paths rest on bit-exact simulation; a symbolic-data
+   model at a tiny shape would close that.
 
 ## Tapeout track
 
-* **Candidate:** `bpu_compute_top` at the asic configuration: 1 QMV slice × 16
-  lanes and a 2-lane FVU with one shared SFU. That is about 0.43 mm² of sky130
-  logic (pre-layout, typical corner) plus SRAMs, running the tiny model bit-exact
-  against the FPGA build and the reference.
-* **Early learning run (ready to submit):** `compute/tapeout/tt` wraps the
-  unchanged fp32 adder and multiplier for a Tiny Tapeout shuttle, behind a
-  byte-wide host protocol. It is 0.052 mm² of sky130 cells, so a 4x2-tile slot.
-  A pin-level test checks it bit-exact, and `assemble.sh` builds the submission
-  tree. It teaches the flow and checks the arithmetic every BPU datapath uses,
-  on real silicon.
+* **Candidate:** `bpu_core` at the asic configuration: 1 QMV slice × 16 lanes, a
+  2-lane FVU with one shared SFU, a 4-bank shared SRAM (512 KiB in the tiny-model
+  build), the sequencer. It runs the tiny model bit-exact against the FPGA build
+  and the reference.
+* **Early learning run (ready to submit):** `compute/tapeout/tt` wraps the unchanged
+  fp32 adder and multiplier for a Tiny Tapeout shuttle behind a byte-wide host
+  protocol. It is 0.052 mm² of sky130 cells, a 4x2-tile slot, with a pin-level test
+  and `assemble.sh` to build the submission tree.
 
 ## Needed from other teams
 
 | From | What | Why |
 |---|---|---|
-| architecture + ml-models | confirm W4A8 + bf16 scales; KV precision (INT8 enables the biggest speedup) | numerics freeze |
+| architecture + ml-models | activation type (A8 today), quantization format and group size, whether Q8.24 / FP16 / INT16 are needed, KV precision | numerics freeze |
 | ml-models | real-checkpoint quality of these numerics (perplexity) | accuracy sign-off |
-| rtl-memory | agreement on layout L0 and the `wreq_*` protocol | weight streaming |
-| architecture / rtl-control | who produces the operation stream (compiler list, RISC-V, list-walker) | integration |
+| rtl-memory | memory-manager command format; capacity plan (staging vs streaming); weights straight from HBM or through the SRAM; HBM interface count | integration, bandwidth |
+| architecture / rtl-control | descriptor format and tag count (`bpu_isa_pkg` is provisional); who generates dependency masks (`bpuref.sched` shows one way) | integration |

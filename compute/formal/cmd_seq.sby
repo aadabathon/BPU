@@ -1,0 +1,33 @@
+# Proofs for bpu_cmd_seq + bpu_scoreboard (4 tags, 2-deep queues, any descriptors,
+# any unit timing): queued and running commands are pending, remaining
+# dependencies are pending and never the command itself, one command in flight per
+# unit, and a tracked command never issues before the commands it waited for complete.
+#   cd compute/formal && sby --sequential -f cmd_seq.sby
+[tasks]
+prove
+bmc
+cover
+
+[options]
+prove: mode prove
+bmc: mode bmc
+bmc: depth 15
+cover: mode cover
+cover: depth 20
+
+[engines]
+prove: aiger rIC3 -e ic3
+prove: abc pdr
+bmc: smtbmc bitwuzla
+cover: smtbmc bitwuzla
+
+[script]
+read_slang -DFORMAL --top bpu_cmd_seq_fv bpu_scoreboard.sv bpu_cmd_seq.sv bpu_cmd_seq_fv.sv
+prep -top bpu_cmd_seq_fv
+flatten
+opt_clean
+
+[files]
+../rtl/ctrl/bpu_scoreboard.sv
+../rtl/ctrl/bpu_cmd_seq.sv
+bpu_cmd_seq_fv.sv
