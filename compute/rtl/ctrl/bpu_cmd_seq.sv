@@ -19,7 +19,11 @@
 module bpu_cmd_seq #(
   parameter int unsigned NTags  = 16,
   parameter int unsigned QDepth = 2,
-  parameter int unsigned BodyW  = 432
+  parameter int unsigned BodyW  = 432,
+  // Body bits each unit's queue keeps (the rest of the body is dropped)
+  parameter int unsigned VecBodyW = BodyW,
+  parameter int unsigned MatBodyW = BodyW,
+  parameter int unsigned MemBodyW = BodyW
 ) (
   input  logic                        clk_i,
   input  logic                        rst_ni,
@@ -59,7 +63,6 @@ module bpu_cmd_seq #(
   logic [2:0][QDepth-1:0]             qv_q;
   logic [2:0][QDepth-1:0][TW-1:0]     qtag_q;
   logic [2:0][QDepth-1:0][NTags-1:0]  qrem_q;
-  logic [2:0][QDepth-1:0][BodyW-1:0]  qbody_q;
   logic [2:0][QW-1:0]                 qhead_q, qtail_q;
   logic [2:0]                         qfull;
 
@@ -85,8 +88,21 @@ module bpu_cmd_seq #(
   logic [2:0] issue;
   for (genvar u = 0; u < 3; u++) begin : g_iss
     assign iss_valid_o[u] = qv_q[u][qhead_q[u]] && !run_q[u] && qrem_q[u][qhead_q[u]] == '0;
-    assign iss_body_o[u*BodyW +: BodyW] = qbody_q[u][qhead_q[u]];
     assign issue[u] = iss_valid_o[u] && iss_ready_i[u];
+  end
+
+  // Bodies: each unit's queue keeps only the bits that unit uses.
+  for (genvar u = 0; u < 3; u++) begin : g_body
+    localparam int unsigned UW = (u == 0) ? VecBodyW : (u == 1) ? MatBodyW : MemBodyW;
+    logic [QDepth-1:0][UW-1:0] body_q;
+    always_ff @(posedge clk_i) begin
+      if (accept && desc_unit_i == 2'(u)) body_q[qtail_q[u]] <= desc_body_i[UW-1:0];
+    end
+    assign iss_body_o[u*BodyW +: BodyW] = BodyW'(body_q[qhead_q[u]]);
+    if (UW < BodyW) begin : g_unused
+      logic unused_hi;
+      assign unused_hi = ^desc_body_i[BodyW-1:UW];
+    end
   end
 
   // Completions: the running command of each unit, plus a reserved-unit descriptor
@@ -139,7 +155,6 @@ module bpu_cmd_seq #(
       if (accept && !bad && desc_unit_i == 2'(u)) begin
         qtag_q[u][qtail_q[u]]  <= desc_tag_i;
         qrem_q[u][qtail_q[u]]  <= rem_new;
-        qbody_q[u][qtail_q[u]] <= desc_body_i;
       end
     end
   end

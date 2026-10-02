@@ -42,7 +42,8 @@ module bpu_core #(
   parameter logic [2:0]  QAddPipe      = 3'b010,
   // Sequencer
   parameter int unsigned NTags         = 16,
-  parameter int unsigned QDepth        = 2
+  parameter int unsigned QDepth        = 2,
+  parameter int unsigned MemBodyW      = 432        // body bits the memory manager uses
 ) (
   input  logic                                clk_i,
   input  logic                                rst_ni,
@@ -114,7 +115,8 @@ module bpu_core #(
   logic [2:0]         iss_valid, iss_ready, done, done_err;
   logic [3*BodyW-1:0] iss_body;
 
-  bpu_cmd_seq #(.NTags(NTags), .QDepth(QDepth), .BodyW(BodyW)) u_seq (
+  bpu_cmd_seq #(.NTags(NTags), .QDepth(QDepth), .BodyW(BodyW), .VecBodyW(VecBodyW),
+                .MatBodyW(MatBodyW), .MemBodyW(MemBodyW)) u_seq (
     .clk_i, .rst_ni,
     .desc_valid_i, .desc_ready_o, .desc_unit_i, .desc_tag_i, .desc_wait_i, .desc_body_i,
     .iss_valid_o(iss_valid), .iss_ready_i(iss_ready), .iss_body_o(iss_body),

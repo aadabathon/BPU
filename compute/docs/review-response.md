@@ -35,7 +35,8 @@ settled.
 | VQCLAMP codes stored as fp32 (4× storage) (§1) | Unchanged; the codes are a temporary, hidden-sized vector. Packing them is a small gearbox change if SRAM space gets tight |
 | Matrix–matrix / prefill (§4) | Out of scope for decode; QMV handles repeated vectors without tiled reuse |
 | SRAM capacity: DeltaNet state is 18 MiB vs 8 MiB SRAM (§2) | Agreed. The core leaves room for it (memory-manager port and commands), but streaming or staging state is rtl-memory's design (roadmap) |
-| Formal proofs are control-only (§5) | Still true, and now stated per harness. The control proofs now cover the shared SRAM (including data integrity for a symbolic address), the sequencer and the FVU on the SRAM. Data correctness rests on bit-exact simulation and gate-level runs |
+| Formal proofs are control-only (§5) | Still true for the engines, and stated per harness. New: the shared SRAM is proven unbounded including **data integrity** for a symbolic address, and the sequencer's dependency ordering is proven unbounded. The FVU on the SRAM passes BMC and covers; 27 of its 30 control properties are proven unbounded (verification.md lists the open three). Engine data correctness rests on bit-exact simulation and gate-level runs |
+| Cost of the rework | The asic `bpu_core` is ~0.72 mm² of sky130 logic versus 0.43 mm² for the serial top. Most of the difference is the FVU's operand collector and buffering, plus the sequencer queues. The FVU's longest path also doubled. Both have known levers (performance.md) |
 | `QmvGroup` 64 is spread across ports and code (§1) | Unchanged; group size 64 is part of the numerics contract |
 
 ## Decisions still needed from the team

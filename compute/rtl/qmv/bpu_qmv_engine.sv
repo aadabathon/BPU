@@ -101,6 +101,7 @@ module bpu_qmv_engine #(
   logic [31:0]      x_q, xs_q, y_q;
 
   logic cmd_fire, qmv_legal;
+  logic q_cmd_ready;                                  // the array takes a new command
   // An operation the array would reject must not reach the memory side, which would
   // then stream weights nobody takes.
   assign qmv_legal = (cmd_k_i != '0) && (cmd_k_i[5:0] == '0) && (32'(cmd_k_i) <= MaxK)
@@ -121,7 +122,7 @@ module bpu_qmv_engine #(
   // ---------------------------------------------------------------------------
   // Array
   // ---------------------------------------------------------------------------
-  logic                    q_x_we, q_xs_we, q_cmd_valid, q_cmd_ready, q_y_valid, q_y_ready;
+  logic                    q_x_we, q_xs_we, q_cmd_valid, q_y_valid, q_y_ready;
   logic                    q_busy, q_err;
   logic [XAW-1:0]          q_x_waddr;
   logic [Lanes*8-1:0]      q_x_wdata;

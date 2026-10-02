@@ -15,7 +15,7 @@ out="${BPU_SYNTH_OUT:-$here/../synth_out}"
 mkdir -p "$out"
 
 # Named configurations come from compute/model/bpuref/configs.py.
-cfg() { (cd "$here/../model" && python3 -m bpuref.configs --params "$1" "$2"); }
+cfg() { (cd "$here/../model" && python3 -W ignore -m bpuref.configs --params "$1" "$2"); }
 declare -A top params
 for c in fpga asic tiny; do top[slice-$c]=bpu_qmv_slice; params[slice-$c]="$(cfg slice $c)"; done
 for c in asic tiny; do top[array-$c]=bpu_qmv_array; params[array-$c]="$(cfg array $c)"; done
@@ -40,8 +40,9 @@ for t in "${targets[@]}"; do
     opt_clean
     tee -q -o $out/$t.stat stat
   " >/dev/null
-  cells=$(grep -E '^ +[0-9]+ cells$' "$out/$t.stat" | awk '{print $1}')
-  flops=$(grep -E 'DFF' "$out/$t.stat" | awk '{s+=$1} END {print s+0}')
-  mems=$(grep -E '\$mem' "$out/$t.stat" | awk '{s+=$1} END {print s+0}')
+  # (grep finds nothing for blocks without flops or memories: not an error)
+  cells=$(grep -E '^ +[0-9]+ cells$' "$out/$t.stat" | awk '{print $1}' || true)
+  flops=$( (grep -E 'DFF' "$out/$t.stat" || true) | awk '{s+=$1} END {print s+0}')
+  mems=$( (grep -E '\$mem' "$out/$t.stat" || true) | awk '{s+=$1} END {print s+0}')
   printf "%-12s %-16s %10s %8s %6s\n" "$t" "${top[$t]}" "$cells" "$flops" "$mems"
 done

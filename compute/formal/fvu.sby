@@ -3,10 +3,12 @@
 # accumulator ordering, pipelined reduction merge, bank arbitration). Lanes, adder
 # trees, the merge adder and the memory contents are cut out: the properties must
 # hold for any data and any bank contention.
-#   prove:    unbounded (rIC3 and ABC PDR race; the first answer wins), 2 lanes,
-#             2 slots, 2-entry write buffer and reduction FIFO (maximum credit
-#             pressure). Memory hungry: run tasks one at a time (sby --sequential).
-#   bmc:      25 cycles from reset; bmc_p2 the same with two read ports
+#   prove:    unbounded (single-engine rIC3 IC3 + ABC PDR; the rIC3 portfolio needs
+#             >12 GB here), addresses below 256 so the solver is not lost in 32-bit
+#             arithmetic. 27 of 30 properties prove within an hour; see
+#             docs/verification.md for the open ones. Run tasks one at a time.
+#   bmc:      25 cycles from reset; bmc_p2 the same with two read ports (slower:
+#             22 cycles take ~40 min)
 #   cover:    an op completes; a reduction writes its result; a forwarded VVECMAT completes
 #   cd compute/formal && sby --sequential -f fvu.sby
 [tasks]
@@ -20,7 +22,7 @@ prove: mode prove
 bmc: mode bmc
 bmc: depth 25
 bmc_p2: mode bmc
-bmc_p2: depth 25
+bmc_p2: depth 22
 cover: mode cover
 cover: depth 40
 

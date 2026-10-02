@@ -17,7 +17,7 @@ mapfile -t files < <(grep -v '^//' compute.f | grep -v '^[[:space:]]*$')
 out="${BPU_SYNTH_OUT:-$here/../synth_out}/sky130"
 mkdir -p "$out"
 
-cfg() { (cd "$here/../model" && python3 -m bpuref.configs --params "$1" "$2"); }
+cfg() { (cd "$here/../model" && python3 -W ignore -m bpuref.configs --params "$1" "$2"); }
 declare -A top params extra
 top[slice]=bpu_qmv_slice;   params[slice]="$(cfg slice asic)"
 top[sfu]=bpu_sfu;           params[sfu]="-GPipeMask=5'b01010"

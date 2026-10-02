@@ -67,10 +67,16 @@ bit-exact on the RTL:
 3. **Timing closure.**
    * Out-of-context Vivado at 250 MHz for `bpu_qmv_slice`, `bpu_fvu_lane`, and the
      SRAM crossbar (32 banks × 5 read ports at 512 bits is the new wide structure);
+   * register the FVU operand collector's request selection: its mapped path doubled
+     with the shared-memory rework;
    * OpenLane 2 on sky130 for the asic configuration.
-4. **Area for tapeout.** The asic core is ~0.4 mm² of sky130 logic plus SRAM macros
-   ([performance.md](performance.md)). Remaining levers: SPM/SRAM sizing for the
-   chosen tapeout model, fusing int→fp32 with the QMV product multiplier.
+4. **Area for tapeout.** The asic `bpu_core` is ~0.72 mm² of sky130 logic plus SRAM
+   macros ([performance.md](performance.md)); the shared-memory machinery added
+   ~0.29 mm² over the serial top. Levers:
+   * an address-width parameter for the FVU's slots, row bases and buffers;
+   * 1-deep sequencer queues;
+   * `AccDepth = 0` at the asic size;
+   * SRAM sizing for the chosen tapeout model.
 5. **Formal coverage of data.** The control logic of every block is proven
    unbounded, and the shared SRAM's data integrity is proven for a symbolic
    address. The engines' data paths rest on bit-exact simulation; a symbolic-data
@@ -80,8 +86,8 @@ bit-exact on the RTL:
 
 * **Candidate:** `bpu_core` at the asic configuration: 1 QMV slice × 16 lanes, a
   2-lane FVU with one shared SFU, a 4-bank shared SRAM (512 KiB in the tiny-model
-  build), the sequencer. It runs the tiny model bit-exact against the FPGA build
-  and the reference.
+  build), the sequencer. That is ~0.72 mm² of logic plus SRAM macros, and it runs
+  the tiny model bit-exact against the FPGA build and the reference.
 * **Early learning run (ready to submit):** `compute/tapeout/tt` wraps the unchanged
   fp32 adder and multiplier for a Tiny Tapeout shuttle behind a byte-wide host
   protocol. It is 0.052 mm² of sky130 cells, a 4x2-tile slot, with a pin-level test

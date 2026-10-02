@@ -89,15 +89,51 @@ regions in the compiler is the cheapest next gain (roadmap).
 ## Area and timing
 
 **sky130** (`scripts/synth_sky130.sh`): the asic configuration mapped onto
-`sky130_fd_sc_hd` cells, typical corner, SRAMs excluded. These are pre-layout numbers:
+`sky130_fd_sc_hd` cells, typical corner, SRAM macros excluded (the shared SRAM's
+banks and the QMV activation buffers become macros on silicon). These are pre-layout numbers:
 no wires, placement or clock tree, and ABC's delay is area-oriented. ABC's results
 move by a few percent between runs; read them as ±5%.
 
-AREA_TABLE
+| Block | Area | Cells | ABC critical path |
+|---|---|---|---|
+| `bpu_qmv_slice` (16 lanes) | 0.111 mm² | 18,951 | 20.7 ns |
+| `bpu_sfu` | 0.134 mm² | 25,236 | 19.7 ns |
+| `bpu_fvu` (2 lanes, 1 shared SFU, 4 collector slots, 8-entry write buffer) | 0.475 mm² | 63,181 | ~63 ns |
+| `bpu_sram_shared` (4 banks, 3 read + 3 write ports; logic only) | 0.020 mm² | 3,473 | 5.8 ns |
+| `bpu_cmd_seq` (16 tags, 2-deep queues, full 432-bit bodies) | 0.102 mm² | 7,665 | 8.4 ns |
+| **`bpu_core`** (asic) | **0.72 mm²** | 93,800 | ~56 ns |
+| (the serial `bpu_compute_top` it replaces) | 0.43 mm² | 68,067 | ~31 ns |
+
+The shared-memory architecture costs about 0.29 mm² of logic at the asic size:
+- the FVU's operand collector, write buffer, forwarding FIFO and 32-bit address
+  arithmetic (+0.16 mm²);
+- the sequencer's queues;
+- the SRAM crossbar.
+
+It saves the private scratchpad, which the shared SRAM replaces. Area levers for a
+tapeout:
+- an address-width parameter (the FVU carries 32-bit element addresses in every
+  slot, row base and buffer entry);
+- 1-deep sequencer queues;
+- a narrower memory-manager body;
+- `AccDepth = 0` (asic VVECMAT rows are long enough not to need forwarding).
+
+**Timing:** the FVU's longest mapped path grew to ~63 ns at the asic pipelining
+settings. The operand collector's request selection is the likely cause: a rotated
+priority scan over the slots, a 32-bit write-count compare and the address mux, all
+in one cycle. It is the first place to add a register before timing closure.
 
 **Generic cells** (`scripts/synth_yosys.sh`, technology-independent), asic configuration:
 
-GENERIC_TABLE
+| Block | Cells | Flops |
+|---|---|---|
+| `bpu_qmv_slice` | 14.7K | 887 |
+| `bpu_qmv_array` (1 slice) | 16.3K | 1,145 |
+| `bpu_sfu` | 17.9K | 197 |
+| `bpu_fvu` (2 lanes, 1 shared SFU) | 57.2K | 6,688 |
+| `bpu_sram_shared` (4 banks, 3R/3W, logic) | 3.3K | 92 |
+| `bpu_cmd_seq` (full-width queues) | 5.2K | 2,808 |
+| **`bpu_core`** | **83.8K** | **10,761** |
 
 **SFU sharing** (`SfuLanes`): the SFU is the largest per-lane cost. Sharing one SFU
 across the asic configuration's two FVU lanes saves about 20% of the logic for ~1.5%

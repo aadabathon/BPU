@@ -228,7 +228,17 @@ def lint_targets() -> list[str]:
     return lines
 
 
+def hdl_params(kind: str, name: str) -> dict:
+    """Parameters of one named configuration of a block: kind is slice, array, fvu or core."""
+    table = {"slice": QMV_SLICE_CONFIGS, "array": QMV_ARRAY_CONFIGS, "fvu": FVU_CONFIGS, "core": TOP_CONFIGS}
+    return table[kind][name].hdl_parameters()
+
+
 if __name__ == "__main__":
     import sys
     if sys.argv[1:] == ["--lint"]:
         print("\n".join(lint_targets()))
+    elif sys.argv[1:2] == ["--params"]:           # --params <kind> <name>: -G arguments
+        print(" ".join(f"-G{k}={v}" for k, v in hdl_params(sys.argv[2], sys.argv[3]).items()))
+    else:
+        sys.exit("usage: python -m bpuref.configs --lint | --params <slice|array|fvu|core> <name>")

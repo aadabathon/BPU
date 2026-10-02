@@ -48,7 +48,11 @@ package bpu_isa_pkg;
   localparam int unsigned MbNW = 24;
   localparam int unsigned MbX = 58, MbXs = 90, MbY = 122;
 
-  // Memory body: opaque to the core, defined by the memory manager.
+  // Bits each body kind uses (the sequencer stores no more).
+  localparam int unsigned VecBodyW = VbAddr + 12 * 32;    // 429
+  localparam int unsigned MatBodyW = MbY + 32;            // 154
+
+  // Memory body: opaque to the core, defined by the memory manager (up to BodyW bits).
 
   /* verilator lint_on UNUSEDPARAM */
 

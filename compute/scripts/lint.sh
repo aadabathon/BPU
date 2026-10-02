@@ -27,7 +27,7 @@ lint bpu_sfu "-GPipeMask=5'b01010"
 # Every named configuration (generated from compute/model/bpuref/configs.py)
 while read -r line; do
   eval "lint $line"
-done < <(cd "$here/../model" && python3 -m bpuref.configs --lint)
+done < <(cd "$here/../model" && python3 -W ignore -m bpuref.configs --lint)
 
 # Edge shapes beyond the named configurations
 lint bpu_fvu_reduce -GLanes=1 "-GAddPipe=3'b101"

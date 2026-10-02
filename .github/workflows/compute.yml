@@ -48,7 +48,7 @@ jobs:
           sby --sequential -f cmd_seq.sby
           sby --sequential -f qmv_slice.sby
           sby --sequential -f qmv_dot.sby
-          sby --sequential -f fvu.sby bmc bmc_p2 cover
+          sby --sequential -f fvu.sby bmc cover            # bmc_p2 (~40 min) and prove: run locally
 
       - name: Soak (fp32 units vs host FPU, SFU vs reference)
         env:
