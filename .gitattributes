@@ -1,5 +1,3 @@
-* text=auto
-*.sh text eol=lf
-*.sv text eol=lf
-*.py text eol=lf
-*.f text eol=lf
+# LF everywhere: the RTL/Python/shell tools run under Linux/WSL.
+* text=auto eol=lf
+*.pdf binary

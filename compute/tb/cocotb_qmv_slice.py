@@ -54,7 +54,8 @@ def random_op(rng, *, wfmt=None, max_groups=6, max_rowblocks=3, scales=realistic
 
 async def reset(dut):
     cocotb.start_soon(Clock(dut.clk_i, 10, unit="ns").start())
-    for sig in (dut.x_we_i, dut.xs_we_i, dut.cmd_valid_i, dut.w_valid_i, dut.ws_valid_i, dut.y_ready_i):
+    for sig in (dut.x_we_i, dut.xs_we_i, dut.cmd_valid_i, dut.w_valid_i, dut.ws_valid_i, dut.y_ready_i,
+                dut.status_clr_i):
         sig.value = 0
     dut.rst_ni.value = 0
     await RisingEdge(dut.clk_i)
@@ -166,7 +167,12 @@ async def random_ops_with_backpressure(dut):
     """Mixed W4/W8 operations of random shape; random stream gaps and output stalls."""
     rng = np.random.default_rng(int(os.environ.get("BPU_SEED", "1")))
     await reset(dut)
-    await run_ops(dut, [random_op(rng) for _ in range(16)], rng)
+    ops = [random_op(rng) for _ in range(16)]
+    await run_ops(dut, ops, rng)
+    assert int(dut.perf_beats_o.value) == sum(len(op.beats) for op in ops)
+    assert int(dut.err_cmd_o.value) == 0
+    # Realistic scales never overflow, so the sticky flags must stay clear.
+    assert int(dut.flag_nan_o.value) == 0 and int(dut.flag_inf_o.value) == 0
 
 
 @cocotb.test()
@@ -186,6 +192,10 @@ async def full_throughput(dut):
     cycles = await run_ops(dut, ops, rng, p_idle=0.0, p_stall=0.0)
     for op, c in zip(ops, cycles):
         assert c == len(op.beats), f"{len(op.beats)} beats took {c} cycles"
+    # The counters agree: every running cycle accepted a beat.
+    assert int(dut.perf_beats_o.value) == sum(len(op.beats) for op in ops)
+    stalls = [int(s.value) for s in (dut.perf_stall_w_o, dut.perf_stall_ws_o, dut.perf_stall_out_o)]
+    assert stalls == [0, 0, 0], f"unexpected stall cycles {stalls}"
 
 
 def _widen(rng, op, kg):
@@ -234,3 +244,45 @@ async def extreme_values(dut):
         ops.append(Op(wfmt, w, realistic_scales(rng, (n, kg)), x, realistic_scales(rng, (kg,))))
         ops.append(random_op(rng, wfmt=wfmt, scales=wild_scales))
     await run_ops(dut, ops, rng)
+    ref = np.concatenate([op.ref for op in ops])
+    assert int(dut.flag_nan_o.value) == int(np.isnan(ref).any())
+    assert int(dut.flag_inf_o.value) == int(np.isinf(ref).any())
+
+    # status_clr_i clears the sticky flags and the counters.
+    await RisingEdge(dut.clk_i)
+    dut.status_clr_i.value = 1
+    await RisingEdge(dut.clk_i)
+    dut.status_clr_i.value = 0
+    await ReadOnly()
+    assert int(dut.flag_nan_o.value) == 0 and int(dut.flag_inf_o.value) == 0
+    assert int(dut.perf_beats_o.value) == 0
+
+
+@cocotb.test()
+async def illegal_commands_are_rejected(dut):
+    """Bad shapes are consumed without running, raise err_cmd_o, and leave the slice usable."""
+    rng = np.random.default_rng(5)
+    await reset(dut)
+    max_groups = CFG.max_k // GROUP
+    for ngroups, nrowblk in ((0, 1), (max_groups + 1, 1), (1, 0)):
+        if ngroups >= 1 << len(dut.cmd_ngroups_i):
+            continue                      # not even encodable at this configuration
+        dut.cmd_valid_i.value = 1
+        dut.cmd_wfmt_i.value = W4
+        dut.cmd_ngroups_i.value = ngroups
+        dut.cmd_nrowblk_i.value = nrowblk
+        await ReadOnly()
+        assert dut.cmd_ready_o.value == 1
+        await RisingEdge(dut.clk_i)
+        dut.cmd_valid_i.value = 0
+        await RisingEdge(dut.clk_i)
+        await ReadOnly()
+        assert dut.err_cmd_o.value == 1, f"ngroups={ngroups} nrowblk={nrowblk} not flagged"
+        assert dut.busy_o.value == 0 and dut.cmd_ready_o.value == 1
+        await RisingEdge(dut.clk_i)
+        dut.status_clr_i.value = 1
+        await RisingEdge(dut.clk_i)
+        dut.status_clr_i.value = 0
+    # A legal operation still runs correctly afterwards.
+    await run_ops(dut, [random_op(rng)], rng)
+    assert dut.err_cmd_o.value == 0

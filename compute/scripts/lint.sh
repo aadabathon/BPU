@@ -20,12 +20,25 @@ lint bpu_fp32_mul "-GPipeMask=3'b000"
 lint bpu_fp32_add
 lint bpu_fp32_add "-GPipeMask=3'b000"
 lint bpu_int2fp32
+lint bpu_sfu
+lint bpu_sfu "-GPipeMask=5'b00000"
+lint bpu_sfu "-GPipeMask=5'b01010"
 
-# Keep in sync with compute/model/bpuref/configs.py
-lint bpu_qmv_slice -GLanes=64 -GRowInterleave=4 -GMaxK=6144                        # fpga
-lint bpu_qmv_slice -GLanes=16 -GRowInterleave=1 -GMaxK=2048 -GTreeRegEvery=0 \
-     "-GMulPipe=3'b010" "-GAddPipe=3'b010"                                         # asic
-lint bpu_qmv_slice -GLanes=4 -GRowInterleave=2 -GMaxK=256 -GProdReg=0 -GTreeRegEvery=1 \
-     -GI2fReg=0 "-GMulPipe=3'b000" "-GAddPipe=3'b000"                             # tiny
+# Every named configuration (generated from compute/model/bpuref/configs.py)
+while read -r line; do
+  eval "lint $line"
+done < <(cd "$here/../model" && python3 -W ignore -m bpuref.configs --lint)
+
+# Edge shapes beyond the named configurations
+lint bpu_fvu_reduce -GLanes=1 "-GAddPipe=3'b101"
+lint bpu_fvu_reduce -GLanes=16 "-GAddPipe=3'b000"
+lint bpu_sram_shared -GNBanks=1 -GNRd=1 -GNWr=1
+lint bpu_sram_shared -GNBanks=32 -GBankWords=4096 -GLanes=16 -GNRd=5 -GNWr=3 "-GOutReg=1'b1"
+lint bpu_sram_shared "-GHash=1'b0" -GNRd=3
+lint bpu_cmd_seq -GQDepth=1
+lint bpu_cmd_seq -GNTags=32 -GQDepth=4
+lint bpu_qmv_engine -GVLanes=64 -GLanes=16                                         # wide SRAM words
+lint tt_um_bpu_fp32 ../tapeout/tt/src/tt_um_bpu_fp32.sv                            # Tiny Tapeout run
+lint bpu_fvu_sys ../tb/hdl/bpu_fvu_sys.sv                                           # test harness
 
 echo "lint clean"

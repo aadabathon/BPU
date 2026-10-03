@@ -13,6 +13,10 @@
 //      The scale for (row, g) is consumed with that row-group's last chunk.
 //   4. Results leave y_* in row order, one fp32 per row.
 //
+// Illegal commands (ngroups == 0, ngroups > MaxK/64, nrowblk == 0) are consumed
+// without running and raise the sticky err_cmd_o. Sticky flags and performance
+// counters clear on status_clr_i.
+//
 // Throughput: one weight beat per cycle when streams and output keep up.
 // Datapath: accept -> x read -> int dot -> group sum -> int2fp | scale mul
 //           -> p = isum * scale -> fp32 accumulate (R rows interleaved) -> FIFO.
@@ -26,7 +30,8 @@ module bpu_qmv_slice #(
   parameter int unsigned TreeRegEvery  = 2,
   parameter bit          I2fReg        = 1'b1,
   parameter logic [2:0]  MulPipe       = 3'b111,
-  parameter logic [2:0]  AddPipe       = 3'b111
+  parameter logic [2:0]  AddPipe       = 3'b111,
+  parameter bit          EnPerf        = 1'b1      // performance counters (0: tied to zero)
 ) (
   input  logic                                clk_i,
   input  logic                                rst_ni,
@@ -62,7 +67,19 @@ module bpu_qmv_slice #(
   input  logic                                y_ready_i,
   output logic [31:0]                         y_data_o,
 
-  output logic                                busy_o
+  output logic                                busy_o,
+
+  // Status: sticky flags, cleared by status_clr_i
+  input  logic                                status_clr_i,
+  output logic                                err_cmd_o,      // an illegal command was rejected
+  output logic                                flag_nan_o,     // a result was NaN
+  output logic                                flag_inf_o,     // a result was +-infinity
+
+  // Performance counters (EnPerf), cleared by status_clr_i
+  output logic [31:0]                         perf_beats_o,     // weight beats accepted
+  output logic [31:0]                         perf_stall_w_o,   // running, no weight beat offered
+  output logic [31:0]                         perf_stall_ws_o,  // running, beat waits for its scale
+  output logic [31:0]                         perf_stall_out_o  // running, blocked on output credits
 );
 
   import bpu_compute_pkg::*;
@@ -94,7 +111,7 @@ module bpu_qmv_slice #(
   logic [CrW-1:0]     credits_q;
 
   logic last_c, last_r, last_g, last_rb, first_beat_rb;
-  logic credit_ok, scale_ok, accept, cmd_fire, y_pop;
+  logic credit_ok, scale_ok, accept, cmd_fire, cmd_legal, y_pop;
 
   assign cpg_m1        = w8_q ? CW'(2 * Cpg4 - 1) : CW'(Cpg4 - 1);
   assign last_c        = (c_q == cpg_m1);
@@ -114,6 +131,8 @@ module bpu_qmv_slice #(
   assign accept      = w_valid_i && w_ready_o;
   assign cmd_ready_o = !run_q;
   assign cmd_fire    = cmd_valid_i && cmd_ready_o;
+  assign cmd_legal   = (cmd_ngroups_i != '0) && (cmd_ngroups_i <= GW'(MaxK / G))
+                    && (cmd_nrowblk_i != '0);
   assign y_pop       = y_valid_o && y_ready_i;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -127,7 +146,7 @@ module bpu_qmv_slice #(
       g_q       <= '0;
       rb_q      <= '0;
     end else if (cmd_fire) begin
-      run_q     <= 1'b1;
+      run_q     <= cmd_legal;
       w8_q      <= cmd_wfmt_i;
       ngroups_q <= cmd_ngroups_i;
       nrowblk_q <= cmd_nrowblk_i;
@@ -320,9 +339,15 @@ module bpu_qmv_slice #(
   logic          p_valid, p_first_g, p_last_g;
   logic [RW-1:0] p_r;
 
+  // Control (valid + tags) travels on the slice's own delay lines; the arithmetic
+  // units only carry data. That keeps control independent of datapath internals
+  // (formal proofs cut the datapath away).
   bpu_fp32_mul #(.PipeMask(MulPipe)) u_prod_mul (
     .clk_i, .rst_ni, .valid_i(f_valid), .a_i(f_isum), .b_i(f_sc),
-    .valid_o(p_valid), .y_o(p)
+    .valid_o(), .y_o(p)
+  );
+  bpu_delay #(.Width(1), .Depth(MulLat), .Reset(1'b1)) u_pv (
+    .clk_i, .rst_ni, .d_i(f_valid), .q_o(p_valid)
   );
   bpu_delay #(.Width(2 + RW), .Depth(MulLat)) u_ptag (
     .clk_i, .rst_ni,
@@ -338,13 +363,17 @@ module bpu_qmv_slice #(
   logic          s_valid, s_last_g;
   logic [RW-1:0] s_r;
   logic          ofifo_ready;
+  logic          s_push, s_nan, s_inf;
 
   // The first group adds to +0.0 (not a bypass) so signed zeros match the spec.
   assign acc_in = p_first_g ? 32'h0000_0000 : acc_q[p_r];
 
   bpu_fp32_add #(.PipeMask(AddPipe)) u_acc_add (
     .clk_i, .rst_ni, .valid_i(p_valid), .a_i(acc_in), .b_i(p),
-    .valid_o(s_valid), .y_o(s_y)
+    .valid_o(), .y_o(s_y)
+  );
+  bpu_delay #(.Width(1), .Depth(AddLat), .Reset(1'b1)) u_sv (
+    .clk_i, .rst_ni, .d_i(p_valid), .q_o(s_valid)
   );
   bpu_delay #(.Width(1 + RW), .Depth(AddLat)) u_stag (
     .clk_i, .rst_ni, .d_i({p_last_g, p_r}), .q_o({s_last_g, s_r})
@@ -356,10 +385,87 @@ module bpu_qmv_slice #(
 
   bpu_fifo #(.Width(32), .Depth(OutFifoDepth)) u_ofifo (
     .clk_i, .rst_ni,
-    .in_valid_i(s_valid && s_last_g), .in_ready_o(ofifo_ready), .in_data_i(s_y),
+    .in_valid_i(s_push), .in_ready_o(ofifo_ready), .in_data_i(s_y),
     .out_valid_o(y_valid_o), .out_ready_i(y_ready_i), .out_data_o(y_data_o),
     .count_o()
   );
+
+  // ---------------------------------------------------------------------------
+  // Status flags and performance counters
+  // ---------------------------------------------------------------------------
+  assign s_push = s_valid && s_last_g;
+  assign s_nan  = (s_y[30:23] == 8'hff) && (s_y[22:0] != '0);
+  assign s_inf  = (s_y[30:23] == 8'hff) && (s_y[22:0] == '0);
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      err_cmd_o  <= 1'b0;
+      flag_nan_o <= 1'b0;
+      flag_inf_o <= 1'b0;
+    end else if (status_clr_i) begin
+      err_cmd_o  <= 1'b0;
+      flag_nan_o <= 1'b0;
+      flag_inf_o <= 1'b0;
+    end else begin
+      if (cmd_fire && !cmd_legal) err_cmd_o  <= 1'b1;
+      if (s_push && s_nan)        flag_nan_o <= 1'b1;
+      if (s_push && s_inf)        flag_inf_o <= 1'b1;
+    end
+  end
+
+  if (EnPerf) begin : g_perf
+    logic stall_out, stall_w, stall_ws;
+
+    // One cause per stalled cycle, in priority order: output credits, weights, scale.
+    assign stall_out = run_q && !credit_ok;
+    assign stall_w   = run_q && credit_ok && !w_valid_i;
+    assign stall_ws  = run_q && credit_ok && w_valid_i && !scale_ok;
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        perf_beats_o     <= '0;
+        perf_stall_w_o   <= '0;
+        perf_stall_ws_o  <= '0;
+        perf_stall_out_o <= '0;
+      end else if (status_clr_i) begin
+        perf_beats_o     <= '0;
+        perf_stall_w_o   <= '0;
+        perf_stall_ws_o  <= '0;
+        perf_stall_out_o <= '0;
+      end else begin
+        perf_beats_o     <= perf_beats_o     + 32'(accept);
+        perf_stall_w_o   <= perf_stall_w_o   + 32'(stall_w);
+        perf_stall_ws_o  <= perf_stall_ws_o  + 32'(stall_ws);
+        perf_stall_out_o <= perf_stall_out_o + 32'(stall_out);
+      end
+    end
+  end else begin : g_no_perf
+    assign perf_beats_o     = '0;
+    assign perf_stall_w_o   = '0;
+    assign perf_stall_ws_o  = '0;
+    assign perf_stall_out_o = '0;
+  end
+
+  // ---------------------------------------------------------------------------
+  // Formal properties (compute/formal/qmv_slice.sby)
+  // ---------------------------------------------------------------------------
+`ifdef FORMAL
+  always_comb begin
+    if (rst_ni) begin
+      // Credits make the non-stalling pipeline safe: a result always finds room.
+      assert (!(s_push && !ofifo_ready));
+      assert (credits_q <= CrW'(OutFifoDepth));
+      // A scale is only ever consumed together with its row-group's last chunk.
+      assert (!(ws_valid_i && ws_ready_o) || (accept && last_c));
+      // Loop counters stay inside the command's shape.
+      if (run_q) begin
+        assert (c_q <= cpg_m1);
+        assert (g_q < ngroups_q);
+        assert (rb_q < nrowblk_q);
+      end
+    end
+  end
+`endif
 
   // ---------------------------------------------------------------------------
   // Simulation-only checks
@@ -381,10 +487,8 @@ module bpu_qmv_slice #(
 
   always @(posedge clk_i) begin
     if (rst_ni) begin
-      if (s_valid && s_last_g && !ofifo_ready)
+      if (s_push && !ofifo_ready)
         $error("bpu_qmv_slice: output FIFO overflow (credit accounting broken)");
-      if (cmd_fire && (cmd_ngroups_i == '0 || cmd_ngroups_i > GW'(MaxK / G) || cmd_nrowblk_i == '0))
-        $error("bpu_qmv_slice: illegal command ngroups=%0d nrowblk=%0d", cmd_ngroups_i, cmd_nrowblk_i);
       if (run_q && (x_we_i || xs_we_i))
         $error("bpu_qmv_slice: activation buffer written while an operation is streaming");
     end

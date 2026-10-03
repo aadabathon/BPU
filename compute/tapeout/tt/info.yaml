@@ -1,0 +1,61 @@
+# Tiny Tapeout project information (yaml_version 6, checked against the TT
+# verilog template in Sept 2026; re-check the current template before submitting).
+# Build the submission tree with ./assemble.sh <dir>: it copies the BPU RTL this
+# design needs into <dir>/src, next to this file and docs/.
+project:
+  title:        "BPU fp32 units"
+  author:       "BPU compute team (SiliconBadgers)"
+  discord:      ""
+  description:  "IEEE fp32 adder and multiplier from the Badger Processing Unit, bit-exact vs numpy"
+  language:     "SystemVerilog"
+  clock_hz:     10000000       # host-paced protocol; the logic closes far above this
+
+  # sky130 estimate: 0.052 mm2 of cells (compute/scripts/synth_sky130.sh tt).
+  # 4x2 tiles is about 36% utilization; 3x2 may also route.
+  tiles: "4x2"
+
+  # Must be unique: rename to tt_um_<github-username>_bpu_fp32 (here and in the
+  # source) before submitting.
+  top_module:  "tt_um_bpu_fp32"
+
+  source_files:
+    - "bpu_compute_pkg.sv"
+    - "bpu_delay.sv"
+    - "bpu_lzc_pow2.sv"
+    - "bpu_lzc.sv"
+    - "bpu_fp32_mul.sv"
+    - "bpu_fp32_add.sv"
+    - "tt_um_bpu_fp32.sv"
+
+pinout:
+  # Inputs
+  ui[0]: "DATA[0]"
+  ui[1]: "DATA[1]"
+  ui[2]: "DATA[2]"
+  ui[3]: "DATA[3]"
+  ui[4]: "DATA[4]"
+  ui[5]: "DATA[5]"
+  ui[6]: "DATA[6]"
+  ui[7]: "DATA[7]"
+
+  # Outputs
+  uo[0]: "R[8*IDX+0]"
+  uo[1]: "R[8*IDX+1]"
+  uo[2]: "R[8*IDX+2]"
+  uo[3]: "R[8*IDX+3]"
+  uo[4]: "R[8*IDX+4]"
+  uo[5]: "R[8*IDX+5]"
+  uo[6]: "R[8*IDX+6]"
+  uo[7]: "R[8*IDX+7]"
+
+  # Bidirectional pins (all inputs)
+  uio[0]: "STROBE"
+  uio[1]: "CMD[0]"
+  uio[2]: "CMD[1]"
+  uio[3]: "CMD[2]"
+  uio[4]: "IDX[0]"
+  uio[5]: "IDX[1]"
+  uio[6]: ""
+  uio[7]: ""
+
+yaml_version: 6

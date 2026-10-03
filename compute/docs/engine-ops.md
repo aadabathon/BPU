@@ -1,164 +1,202 @@
-# Compute engine operations (v0 draft)
+# Interfaces and operations (v2: shared-SRAM architecture)
 
-This is the compute team's contract with everyone upstream: the ISA and command
-format (architecture / rtl-control), the tensor layouts (ml-compiler / rtl-memory)
-and the golden model (ml-models). The ISA, whatever form it takes, lowers to the
-operations below. Compute guarantees that each operation matches `bpuref` bit for
-bit (see [numerics.md](numerics.md)).
+The compute team's contract with everyone else: the descriptor format (architecture,
+rtl-control, the control SoC), the shared-SRAM protocol and the memory manager's
+duties (rtl-memory), tensor layouts (ml-compiler) and the golden model (ml-models).
+Every operation matches `bpuref` bit for bit ([numerics.md](numerics.md)).
 
-Status legend: **built** = RTL plus tests passing; **planned** = specified here, no RTL yet.
+The organization follows the BPU block diagram (`meeting_docs/zeb_block_diagram.png`):
+a command sequencer and scoreboard issue work to a matrix unit, a vector unit and a
+memory manager, which all exchange tensor data through one banked shared SRAM.
+The diagram is a sketch, so where it leaves a choice open, the choice here is
+labelled as provisional.
 
-## Interface conventions (all engines)
+## Conventions
 
-* **Streams** use valid/ready. A transfer happens on a cycle where both are high.
-  A source must not drop `valid` or change `data` until the transfer happens
-  (AXI-Stream rules). `ready` may depend on `valid`, never the reverse.
-* **Arithmetic pipelines inside an engine are valid-only and never stall.** Each
-  engine admits work only when it has reserved room for the results (credits), so
-  latency can change with parameters without anything upstream noticing.
-* **Ports are flat vectors** (`logic [N*W-1:0]`), with no SV interfaces or structs
-  on module boundaries. That keeps Verilator, Icarus, Yosys/slang, Vivado and the
-  OpenLane flow all happy.
-* **Reset** is asynchronous and active low (`rst_ni`), and only on control state.
-  Datapath flops have no reset, so they map to SRLs/DSP registers on the FPGA and
-  smaller cells on the ASIC.
-* **Memories** are instantiated only through technology wrappers
-  (`bpu_sram_1r1w`). No vendor primitives in engine RTL.
-* **Naming** follows the lowRISC style: `_i`/`_o` ports, `_q` flops, `u_` instances,
-  `g_` generate blocks, CamelCase parameters, and a `bpu_` prefix on every module.
+* **Streams and requests** use valid/ready with AXI-Stream rules: a source holds
+  valid and payload until the transfer, and ready may depend on valid, never the
+  reverse.
+* **Arithmetic pipelines never stall.** Engines admit work only when its results
+  have a place (credits), so latencies can change with parameters.
+* **Completion means visibility.** An engine reports a command done only after its
+  last write has been accepted by the shared SRAM, so any later command sees it.
+* **Ports are flat vectors.** No SV interfaces or structs on module boundaries
+  (Verilator, Icarus, Yosys/slang, SymbiYosys and Vivado all accept the RTL).
+* **Reset** is asynchronous and active low, on control state only.
+* **Memories** only through `bpu_sram_1r1w` / `bpu_sram_1r1w_be` (macro wrappers on silicon).
+* **Naming**: lowRISC style (`_i`/`_o`, `_q`, `u_`, `g_`), CamelCase parameters,
+  `bpu_` prefix. Numerics constants live in `bpu_compute_pkg`; provisional encodings
+  (opcodes, function codes, descriptor layout) in `bpu_isa_pkg` / `bpuref/isa.py`.
 
-## QMV: quantized matrix-vector engine
+## Hierarchy
 
-### `bpu_qmv_slice` (built)
+```
+bpu_core                      the compute + shared-SRAM half of the block diagram
+├── bpu_cmd_seq               command sequencer: descriptors -> per-unit queues -> issue
+│   └── bpu_scoreboard        pending / error bit per tag
+├── bpu_fvu                   vector unit: fp32, shared-SRAM client (no private memory)
+│   ├── bpu_fvu_lane x V      fp32 mul -> add, bf16 round, quantize clamp, select (+ own SFU)
+│   ├── bpu_sfu x SfuLanes    shared SFU bank when SfuLanes < VLanes
+│   └── bpu_fvu_reduce        lane adder tree + pipelined canonical merge; order-key max
+├── bpu_qmv_engine            matrix unit: shared-SRAM client around the QMV array
+│   └── bpu_qmv_array         NSlice slices, in-order merge, argmax
+│       └── bpu_qmv_slice xN  int dot (W4/W8 x A8) -> fp32 scale -> row-interleaved accumulate
+└── bpu_sram_shared           NBanks of 1R1W SRAM behind a request/response crossbar
+```
 
-Computes `y = W·x` for the rows streamed through it; `W` is `w4` or `w8`
-with bf16 group scales, and `x` is `a8` with bf16 group scales.
+Outside the core: the control SoC (writes descriptors, reads the scoreboard) and the
+memory manager (owned by rtl-memory; see below).
 
-| Parameter | Meaning | fpga | asic | tiny |
-|---|---|---|---|---|
-| `Lanes` | int4 MAC lanes (a W8 beat carries Lanes/2 weights) | 64 | 16 | 4 |
-| `RowInterleave` (R) | rows accumulated in parallel | 4 | 1 | 2 |
-| `MaxK` | activation buffer capacity | 6144 | 2048 | 256 |
-| `OutFifoDepth` | output FIFO / credit pool | 2R | 2R | 2R |
-| `ProdReg`, `TreeRegEvery`, `I2fReg`, `MulPipe`, `AddPipe` | pipeline registers | deep | shallow | none |
+## Descriptors and the sequencer (`bpu_cmd_seq`)
 
-**Operation sequence**
+A descriptor is `{unit, tag, wait, body}`:
 
-1. While `cmd_ready_o` is high, write the activations: `x_*` takes words of `Lanes`
-   int8 codes (element `k` is in word `k / Lanes`, byte `k % Lanes`), and `xs_*`
-   takes one bf16 scale per 64-element group.
-2. Handshake a command: `{wfmt, ngroups = K/64, nrowblk = N/R}`. N must be a
-   multiple of R; the compiler pads with zero rows.
-3. Stream weight beats on `w_*` and weight scales on `ws_*` in **layout L0**:
-
-   ```
-   for rb in 0 .. N/R-1:
-     for g in 0 .. K/64-1:
-       for r in 0 .. R-1:                     # row = rb*R + r
-         for c in 0 .. chunks-1:              # chunks = 64/Lanes (W4) or 128/Lanes (W8)
-           beat(row, elements g*64 + c*per_beat ...)
-         scale(row, g)                        # consumed with the last chunk
-   ```
-
-   Beat bit layout: W4 puts element `i` of the chunk in bits `[4i+3:4i]`. W8
-   puts element `j` in byte `j`, little-endian.
-4. `y_*` delivers one fp32 per row, in row order.
-
-`bpuref.qmv.pack_weight_stream` / `pack_x_words` are the executable definition
-of this layout. The memory team's weight packer must produce exactly these streams.
-On F2, one W4 beat (Lanes = 64) is 256 bits, the width of one HBM pseudo-channel
-transfer, which carries exactly one 64-weight quantization group.
-
-**Throughput.** One beat per cycle, as long as the stream sources and the output
-consumer keep up and a row block lasts longer than the pipeline. Roughly:
-`(K/64) * R * chunks >= pipeline latency + R`, where the latency is about 16
-cycles at the fpga configuration. Every Qwen3.5 projection (K ≥ 2048) is far
-above this bound; raise `OutFifoDepth` for short-K work.
-The `full_throughput` test asserts exactly one beat per cycle.
-
-**Ordering hazard.** Row interleave exists so that updates to the same row's
-fp32 accumulator are at least `AddLatency + 1` cycles apart. The elaboration check
-enforces `R * 64/Lanes >= AddLatency + 1`.
-
-### QMV array and epilogues (planned, milestone C2)
-
-* `bpu_qmv_array`: `NSlice` slices. Rows are striped so slice `s` owns rows
-  `≡ s (mod NSlice)`, the activation vector is broadcast to every slice, and the
-  outputs merge in row order. On F2, slice `s` is fed by HBM pseudo-channel `s`.
-* **Argmax epilogue** for the LM head: each slice keeps a running (max, index),
-  and the array reduces them; the smallest index wins ties. This avoids shipping
-  248,320 logits.
-* **Accumulator-init epilogue** (`acc` starts at a given fp32 value, e.g. a
-  residual or bias). *This changes the arithmetic*: `init + Σp` is not
-  `(Σp) + init` in fp32. It needs a spec entry before use.
-* **Activation double-buffering**: load the next `x` while the current op streams.
-
-## FVU: fp32 vector unit (planned, milestones C4–C5)
-
-Operands come from a local scratchpad or are streamed through the memory port.
-Every operation below is exact to the fp32 rules in numerics.md, with
-canonical reduction order.
-
-| Group | Operations |
+| Field | Meaning |
 |---|---|
-| Element-wise | `add`, `sub`, `mul`, `scale` (vector × scalar), `axpy` (a·x + y), `select`/`copy` |
-| Conversion | `cvt.bf16→f32`, `cvt.f32→bf16` (RNE), `dequant` (int8 + bf16 group scale → f32), `quant` (f32 → a8 codes + bf16 group scales, the input to QMV) |
-| Reduction | `sum`, `sumsq`, `max`, `argmax` (canonical order) |
-| Special function (SFU) | `exp2`, `log2`, `rcp`, `rsqrt`, plus fixed compositions `exp`, `sigmoid`, `silu`, `softplus` |
-| 2-D | `matvec` (y = M·x), `vecmat` (y = xᵀ·M), `rank1` (M = a·M + u·vᵀ) |
-| Sequence helpers | `rope` (rotate pairs using a cos/sin table), `conv_step` (4-tap causal conv with a history shift) |
+| `unit` | 0 vector, 1 matrix, 2 memory manager (3 reserved: completes at once with an error) |
+| `tag` | names the command in the scoreboard (`NTags`, 16 by default). A descriptor waits at the door while an earlier command with the same tag is still pending, so tags can be reused freely |
+| `wait` | bit mask of tags this command depends on. It is resolved at acceptance against the commands pending at that moment and then only shrinks as they complete, so a bit always means a specific earlier command, never a later reuse of the tag |
+| `body` | the unit's operation (`bpu_isa_pkg::BodyW` = 432 bits); addresses and strides are 32-bit element addresses |
 
-## Qwen3.5-2B decode → engine operations
+* Descriptors are accepted in program order into one queue per unit (`QDepth`).
+  Each unit runs one command at a time, in order; the units run concurrently.
+* Commands to the same unit are ordered by construction. Software only needs wait
+  bits for dependencies on other units. `bpuref.sched` derives them from each op's
+  read and write footprint (read after write, write after read, write after write).
+* The scoreboard exposes `pending_o`, `err_o` (status of the last completion per tag)
+  and `cpl_o` (completions this cycle). A completed command's results are visible to
+  everything issued after it.
 
-Shapes are derived from the SiliconBadgers report's MAC counts and "187 linear
-calls" (18×5 + 6×4 + 24×3 + 1). Tensor names and the norm conventions must be
-confirmed against the pinned `modeling_qwen3_5.py` before RTL depends on them.
+**Vector body** (LSB first): `op[5] func[3] half_log2[5] rows[16] cols[16]`, then
+`d a b c s t ds as bs cs ss ts`, 32 bits each. **Matrix body**: `wid[16] wfmt argmax
+k[16] n[24] x[32] xs[32] y[32]`. **Memory body**: opaque to the core; rtl-memory
+defines it.
 
-### Projections (all QMV, K is a multiple of 64 everywhere)
+## Shared SRAM (`bpu_sram_shared`)
 
-| Projection | K | N | Per token |
-|---|---|---|---|
-| DeltaNet `in_proj_qkv` | 2048 | 6144 | ×18 |
-| DeltaNet `in_proj_z` | 2048 | 2048 | ×18 |
-| DeltaNet `in_proj_b`, `in_proj_a` | 2048 | 16 + 16 (merge into one 32-row op) | ×18 |
-| DeltaNet `out_proj` | 2048 | 2048 | ×18 |
-| Attention `q_proj` (query + output gate) | 2048 | 4096 | ×6 |
-| Attention `k_proj`, `v_proj` | 2048 | 512 each | ×6 |
-| Attention `o_proj` | 2048 | 2048 | ×6 |
-| MLP `gate_proj`, `up_proj` | 2048 | 6144 each | ×24 |
-| MLP `down_proj` | 6144 | 2048 | ×24 |
-| LM head (tied to the embedding) + argmax | 2048 | 248,320 | ×1 |
+* `NBanks` banks of `BankWords` words; a word is `VLanes` fp32 elements (64 bytes at
+  the fpga configuration: 32 banks × 256 KiB = 8 MiB).
+* Clients have independent read and write ports: request `valid/ready` + word
+  address (+ lane mask and data for writes); read response `rvalid/rdata` exactly
+  `RdLat = 1 + OutReg` cycles after acceptance, in request order, no backpressure.
+* **Visibility**: a write accepted in cycle t is seen by every read accepted after
+  t. A read accepted in the same cycle as a write to the same word gets the old data.
+* **Arbitration**: each bank takes one read and one write per cycle; competing
+  requests are granted round-robin per bank (a waiting request is served within
+  NRd − 1, or NWr − 1, other grants of that bank). The bank of a word is its address
+  modulo NBanks XOR-folded with the row bits, so streams whose bases differ by a
+  multiple of NBanks still spread out.
+* **Out-of-range** requests are accepted at once, never touch a bank (reads return
+  zero, writes are dropped) and raise `*_oob_o`; engines turn that into an error on
+  the running command.
+* Ports in `bpu_core`: reads `[vector × FRdPorts | matrix | memory manager]`, writes
+  `[vector | matrix | memory manager]`.
 
-### Everything else (FVU unless noted)
+## Memory manager (outside the core; rtl-memory)
 
-| Qwen op | Engine sequence |
-|---|---|
-| Embedding lookup | QMV row fetch of the tied table, or `dequant` of one row |
-| RMSNorm (2048; convention `w` vs `1+w` to confirm) | `sumsq` → `scale` by 1/2048 → `add` eps → `rsqrt` → `scale` → `mul` weight |
-| Activation quantize before each projection | `quant` |
-| Causal conv1d (k=4, 6144 ch) + SiLU | `conv_step` → `silu` |
-| q/k L2 norm (16 heads × 128), q × 1/√128 | `sumsq` → `rsqrt` → `scale` |
-| β = σ(b), α = exp(−exp(A_log)·softplus(a + dt_bias)) (16 values) | `add`, `softplus`, `mul`, `exp`, `sigmoid` |
-| DeltaNet state step (16 heads, S 128×128 fp32) | `vecmat` (Sᵀk, Sᵀq) → δ = β(v − αSᵀk) → o = αSᵀq + δ(k·q) → `rank1` (S = αS + kδᵀ) |
-| Gated RMSNorm: norm(o) ⊙ SiLU(z) | RMSNorm sequence → `silu` → `mul` |
-| Q/K per-head RMSNorm (256), partial RoPE (64 of 256 dims) | RMSNorm sequence → `rope` |
-| Decode attention (8 Q heads / 2 KV heads, GQA) | `matvec` (K·q) → online softmax (`max`, `exp`, `sum`, rescale) → `vecmat` (pᵀV) |
-| Attention output gate | `sigmoid` → `mul` |
-| MLP SiLU(gate) ⊙ up | `silu` → `mul` |
-| Residual add | `add` |
-| Greedy sampling | QMV argmax epilogue on the LM head |
+The core expects the memory manager to:
 
-## Draft command descriptor (for the ISA/control discussion)
+1. Take its commands from the sequencer (`mm_cmd_valid_o/ready_i`, `mm_cmd_body_o`)
+   and report each one done (`mm_done_i`, `mm_err_i`) once its SRAM writes are accepted.
+2. Move data with its own SRAM read and write port (`mm_rd_*`, `mm_wr_*`): HBM ↔ SRAM
+   and SRAM ↔ SRAM transfers, the per-token inputs, KV and state streaming.
+3. Answer the matrix unit's weight requests: on `wreq` (*tensor `wid`, `nrowblk` row
+   blocks, `k/64` groups, format `wfmt`*), stream each slice's beats in layout L0
+   (below) on `w_*` and the bf16 weight scales on `ws_*`, padding rows zero. Weights
+   are used once per token, so they can stream straight from HBM without landing
+   in the SRAM; staging them through the SRAM also works but costs SRAM bandwidth.
 
-Not frozen. It lists the fields compute needs, so the ISA team can fit them into
-a real encoding.
+## Vector unit (`bpu_fvu`)
 
-| Field | QMV | FVU |
+Operand addressing: a vector operand is `X[r,j] = mem[x + r·x_stride + j]` (64-aligned
+base and stride); a row scalar is `S[r] = mem[s + r·s_stride]`; a group scalar is
+`T[r,j] = mem[t + r·t_stride + j/64]`.
+
+| Op | Result | Reads |
 |---|---|---|
-| `opcode` | `qmv` | one of the operations above |
-| `wfmt` | w4 / w8 | – |
-| shape | `ngroups` (K/64), `nrowblk` (N/R) | length, rows/cols for 2-D ops |
-| operands | weight + scale stream ids, x buffer | scratchpad addresses or stream ids, scalar immediate (fp32) |
-| result | output stream id | scratchpad address or stream id |
-| epilogue | none / argmax (/ acc-init, once specified) | – |
-| sync | completion tag (sequence number) | completion tag |
+| `VADD` `VSUB` `VMUL` | a+b, a-b, a·b | a b |
+| `VMULS` `VADDS` | a·S, a+S | a s |
+| `VAXPY` | (S·a) + b | a b s |
+| `VMULADD` | (a·b) + c | a b c |
+| `VMULG` | a·T (per-64-group scalar: dequantize, quantize) | a t |
+| `VSFU` | rcp / rsqrt / exp2 / exp / log2 (a) | a |
+| `VRBF16` `VCOPY` `VPERM` | bf16(a), a, a[j xor half] | a |
+| `VQCLAMP` | clamp(rne(a), ±127) | a |
+| `VSEL` | a > S ? b : c | a b c s |
+| `RSUM` `RDOT` | canonical tree sum of a, of a·b → one element per row | a (b) |
+| `RMAX` `RAMAX` | max of a, of \|a\| → one element per row | a |
+| `VVECMAT` | d[j] = Σ_r S[r]·a[r,j], sequential over rows | a s |
+
+How it runs:
+
+* A walker allocates one **operand-collector slot** per word of the op (`NSlot`
+  slots of fetch-ahead). Each of the `RdPorts` read ports fetches its class of
+  operands (port 0: s, t, a; port 1: b; port 2: c; one port serves all) for the
+  slots in order; per-port tag FIFOs route the in-order responses, so any SRAM
+  latency or contention works.
+* The oldest slot **launches** when its operands are in, the write buffer has room
+  for its result (credits), and, for reductions, the reduction FIFO has a credit.
+  Row scalars and group scalars are fetched once and reused by the following
+  words. A VSFU word with a shared SFU bank launches once per lane group.
+* Results go through a `WbDepth` write buffer to the write port; reductions pass
+  through `bpu_fvu_reduce` (about one word per cycle).
+* **VVECMAT**: when a row fits the `AccDepth`-word forwarding FIFO, row r+1 takes
+  row r's results from the FIFO and only the last row is written. Longer rows read
+  the accumulator back from the SRAM, and the read of word w of row r+1 waits until
+  the write of word w of row r has been **accepted** (counted, not timed).
+* **Errors**: malformed descriptors (unknown opcode or SFU function, misalignment,
+  empty shape, bad VPERM geometry) complete immediately with `err_o`; an operand that
+  reaches past the SRAM runs but completes with `err_o`. Aliasing between an op's
+  reads and writes beyond exact in-place updates is a software rule
+  (`bpuref.fvu.validate`), not checked in hardware.
+
+## Matrix unit (`bpu_qmv_engine`, `bpu_qmv_array`, `bpu_qmv_slice`)
+
+**Command** `wid, wfmt, argmax, k, n, x, xs, y`:
+
+1. Load: read `k` int8 codes (exact fp32 integers at `x`, 64-aligned) and `k/64`
+   bf16 scales (fp32 at `xs`) from the shared SRAM into the array's activation
+   buffers, with credits for a small response buffer; a gearbox moves
+   min(VLanes, Lanes) codes and one scale per cycle. The activation buffers stay in
+   the engine: every weight row re-reads x, which the shared SRAM could not feed.
+2. Start the array (rows padded to whole row blocks; `n` real rows) and raise
+   `wreq_*` to the memory manager.
+3. Write results to the SRAM, packed into words: `y[i]` for `i < n`, or in argmax
+   mode `y[0] = index` (as fp32) and `y[1] = value`.
+
+The array:
+
+* Global row `n` is computed by slice `n % NSlice` as its local row `n / NSlice`;
+  slice `s` takes the weight stream of HBM interface `s`.
+* **Layout L0**, per slice:
+  `for rb: for g < K/64: for r < R: for chunk: beat(local row rb·R + r, group g, chunk)`.
+  The weight scale for (row, g) is consumed with that row-group's last chunk. A W4
+  beat holds `Lanes` int4 codes (element i in bits [4i+3:4i]); a W8 beat holds
+  `Lanes/2` int8 codes as little-endian bytes. On F2 one W4 beat is one 256-bit HBM
+  transfer = one 64-weight group. Executable definition: `bpuref.qmv.pack_array_streams`.
+* **Throughput**: one beat per cycle per slice whenever a row block outlasts the
+  pipeline (every Qwen3.5 shape). The `full_throughput` test measures it.
+* **Status**: `flag_nan_o`, `flag_inf_o` for the current command; per-slice counters
+  in the array.
+
+## Qwen3.5 decode on these operations
+
+`bpuref.qwen.Compiler.step_program(pos)` emits the decode step and `bpuref.sched`
+turns it into descriptors. The step is verified against Hugging Face (math) and runs
+bit-exact on `bpu_core` (tiny model). Per layer:
+
+| Block | Operations |
+|---|---|
+| RMSNorm (`1 + w`) | RDOT → VMULS 1/n → VADDS eps → rsqrt → VMULS → VMUL |
+| Activation quantize | RAMAX → VMULS 1/127 → VRBF16 → rcp → VMULG → VQCLAMP |
+| Projections | QMV (one quantize feeds several QMVs: qkv/z/b/a, q/k/v, gate/up) |
+| Causal conv (k=4) + SiLU | VMUL + 3 × VMULADD over the 3-slot history, 3 × VCOPY, SiLU |
+| q/k l2norm, q/√dk | RDOT (rows = heads) → VADDS → rsqrt → VMULS (per-row scalar) |
+| β, α gates | sigmoid; exp → +1 → log2 → ·ln2 → VSEL(>20) = softplus; exp(A_log)·sp·(−1) → exp |
+| Delta rule, per head | VMULS (S·α) → VVECMAT (Sᵀk) → VSUB, VMULS (δ) → VAXPY (S += k δᵀ) → VVECMAT (Sᵀq) |
+| Gated RMSNorm, silu(z) | RDOT (rows = heads) … VMUL(w) → SiLU(z) → VMUL |
+| Q/K per-head RMSNorm, partial RoPE | RMSNorm (rows = heads) → VPERM (half = rot/2) → VMUL(±sin) → VMULADD(cos) |
+| KV append, attention per head | VCOPY → RDOT (K·q, rows = positions) → scale → RMAX → exp(s − m) → RSUM → rcp → VMULS → VVECMAT (pᵀV) |
+| Output gate, MLP, residual | sigmoid → VMUL; SiLU(gate)·up; VADD |
+| LM head | final RMSNorm → quantize → QMV argmax (tied embedding) |
+| Embedding | the memory manager writes the row's codes + scales; VMULG dequantizes |

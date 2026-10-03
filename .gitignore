@@ -10,3 +10,6 @@ results.xml
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Formal (SymbiYosys) work directories
+compute/formal/*/

@@ -1,0 +1,41 @@
+# Proofs for bpu_sram_shared (3 read and 2 write clients, 2 banks x 2 words, plus
+# out-of-range addresses): one grant per bank and port kind, round-robin bound on
+# waiting, fixed response latency, out-of-range flags, and data integrity for a
+# symbolic tracked address (a read returns the last write accepted before it).
+#   prove / prove_reg: unbounded, without / with the output register
+#   bmc:   12 cycles (the unbounded proofs cover every depth); cover: data flows
+#   cd compute/formal && sby --sequential -f sram_shared.sby
+[tasks]
+prove plain
+prove_reg
+bmc plain
+cover plain
+
+[options]
+prove: mode prove
+prove_reg: mode prove
+bmc: mode bmc
+bmc: depth 12
+cover: mode cover
+cover: depth 20
+
+[engines]
+prove: aiger rIC3 -e ic3
+prove: abc pdr
+prove_reg: aiger rIC3 -e ic3
+prove_reg: abc pdr
+bmc: smtbmc bitwuzla
+cover: smtbmc yices
+
+[script]
+plain: read_slang -DFORMAL --top bpu_sram_fv bpu_sram_1r1w_be.sv bpu_sram_shared.sv bpu_sram_fv.sv
+prove_reg: read_slang -DFORMAL --top bpu_sram_fv -G OutReg=1 bpu_sram_1r1w_be.sv bpu_sram_shared.sv bpu_sram_fv.sv
+prep -top bpu_sram_fv
+memory_map
+flatten
+opt_clean
+
+[files]
+../rtl/common/bpu_sram_1r1w_be.sv
+../rtl/mem/bpu_sram_shared.sv
+bpu_sram_fv.sv
