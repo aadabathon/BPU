@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1420" viewBox="0 0 1560 1420"><defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1e1e1e"/></marker><marker id="mb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1971c2"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2f9e44"/></marker><marker id="mo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#e8590c"/></marker></defs><rect width="100%" height="100%" fill="#ffffff"/><text x="40" y="20.0" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Matrix unit: port interface (draft, 2026-10-06)</text>
+<text x="40" y="58.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#495057" dominant-baseline="hanging" xml:space="preserve">Port names are today's bpu_qmv_engine; colours mark what the 10-03-26 slides change.</text>
+<rect x="560" y="80" width="380" height="893" rx="10" fill="#e7f5ff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="580" y="100.0" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">matrix_unit</text>
+<text x="580" y="138.0" font-family="Cascadia Code, Consolas, monospace" font-size="16" fill="#495057" dominant-baseline="hanging" xml:space="preserve">today: bpu_qmv_engine</text>
+<text x="580" y="180.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Parameters</text>
+<text x="580" y="197.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  NSlice, Lanes  array size</text>
+<text x="580" y="215.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  MaxK           longest dot product</text>
+<text x="580" y="232.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  WordW          SRAM word bits</text>
+<text x="580" y="250.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  AddrW          SRAM word address bits</text>
+<text x="580" y="267.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  NRdPorts       SRAM read ports (new)</text>
+<text x="580" y="285.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="580" y="302.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Inside (the tile stages)</text>
+<text x="580" y="320.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  command decode -&gt; loop sequencer</text>
+<text x="580" y="337.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  -&gt; fetch -&gt; stage/unpack -&gt; PE array</text>
+<text x="580" y="355.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  -&gt; accumulate -&gt; epilogue</text>
+<text x="580" y="372.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  -&gt; write back -&gt; completion</text>
+<text x="580" y="390.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="580" y="407.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Commands (slides)</text>
+<text x="580" y="425.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  M.GEMV  M.GEMM  M.OUTER</text>
+<text x="580" y="442.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Arithmetic profiles (slides)</text>
+<text x="580" y="460.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  BYTE_DOT     QSTATE_S16</text>
+<text x="580" y="477.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">  QSTATE_U16   Q824_ORDERED</text>
+<text x="580" y="495.0" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="580" y="512.5" font-family="Cascadia Code, Consolas, monospace" font-size="14" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">One clock domain: clk_i / rst_ni</text>
+<rect x="40" y="100" width="260" height="83" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="52" y="112.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Clock / reset</text>
+<text x="52" y="136.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">rst_ni: async, active low</text>
+<line x1="300" y1="135" x2="560" y2="135" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="114.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">clk_i  [1]</text>
+<line x1="300" y1="169" x2="560" y2="169" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="148.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">rst_ni  [1]</text>
+<rect x="40" y="213" width="260" height="117" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="52" y="225.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Command sequencer</text>
+<text x="52" y="249.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">(bpu_cmd_seq)</text>
+<text x="52" y="266.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">ready/valid; one matrix</text>
+<text x="52" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">command in flight</text>
+<line x1="300" y1="248" x2="560" y2="248" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="227.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">cmd_valid_i  [1]</text>
+<line x1="560" y1="282" x2="300" y2="282" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="261.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">cmd_ready_o  [1]</text>
+<line x1="300" y1="316" x2="560" y2="316" stroke="#1971c2" stroke-width="2" marker-end="url(#mb)"/>
+<text x="310" y="295.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1971c2" dominant-baseline="hanging" xml:space="preserve">cmd_i  [mat_cmd_t]</text>
+<rect x="40" y="360" width="260" height="117" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="52" y="372.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Scoreboard</text>
+<text x="52" y="396.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">done_o pulses once the last</text>
+<text x="52" y="413.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">result write is accepted;</text>
+<text x="52" y="431.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">err_o / err_code_o say why</text>
+<line x1="560" y1="395" x2="300" y2="395" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="374.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">done_o  [1]</text>
+<line x1="560" y1="429" x2="300" y2="429" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="408.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">err_o  [1]</text>
+<line x1="560" y1="463" x2="300" y2="463" stroke="#2f9e44" stroke-width="2" marker-end="url(#mg)"/>
+<text x="310" y="442.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#2f9e44" dominant-baseline="hanging" xml:space="preserve">err_code_o  [2]</text>
+<rect x="40" y="507" width="260" height="83" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="52" y="519.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Status / debug</text>
+<text x="52" y="543.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">flag_sat_o replaces</text>
+<text x="52" y="560.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">flag_nan_o / flag_inf_o</text>
+<line x1="560" y1="542" x2="300" y2="542" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="310" y="521.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">busy_o  [1]</text>
+<line x1="560" y1="576" x2="300" y2="576" stroke="#1971c2" stroke-width="2" marker-end="url(#mb)"/>
+<text x="310" y="555.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1971c2" dominant-baseline="hanging" xml:space="preserve">flag_sat_o  [1]</text>
+<rect x="1240" y="100" width="280" height="219" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1252" y="112.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Shared SRAM: read port</text>
+<text x="1252" y="136.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">x NRdPorts (today 1)</text>
+<text x="1252" y="153.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="1252" y="171.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">response exactly RdLat cycles</text>
+<text x="1252" y="188.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">after the request is accepted,</text>
+<text x="1252" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">in order; oob = address past</text>
+<text x="1252" y="223.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">the end of the SRAM</text>
+<line x1="940" y1="135" x2="1240" y2="135" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="114.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_valid_o  [1]</text>
+<line x1="1240" y1="169" x2="940" y2="169" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="148.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_ready_i  [1]</text>
+<line x1="940" y1="203" x2="1240" y2="203" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="182.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_addr_o  [AddrW]</text>
+<line x1="1240" y1="237" x2="940" y2="237" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="216.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_rvalid_i  [1]</text>
+<line x1="1240" y1="271" x2="940" y2="271" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="250.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_rdata_i  [WordW]</text>
+<line x1="1240" y1="305" x2="940" y2="305" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="284.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mrd_oob_i  [1]</text>
+<rect x="1240" y="349" width="280" height="219" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1252" y="361.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Shared SRAM: write port</text>
+<text x="1252" y="385.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="1252" y="402.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">a write accepted in cycle t is</text>
+<text x="1252" y="420.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">seen by reads accepted after t</text>
+<text x="1252" y="437.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="1252" y="455.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">mask: one bit per 32-bit</text>
+<text x="1252" y="472.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">element today</text>
+<line x1="940" y1="384" x2="1240" y2="384" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="363.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mwr_valid_o  [1]</text>
+<line x1="1240" y1="418" x2="940" y2="418" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="397.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mwr_ready_i  [1]</text>
+<line x1="940" y1="452" x2="1240" y2="452" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="431.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mwr_addr_o  [AddrW]</text>
+<line x1="940" y1="486" x2="1240" y2="486" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="465.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">mwr_mask_o  [WordW/32]</text>
+<line x1="940" y1="520" x2="1240" y2="520" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="499.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mwr_data_o  [WordW]</text>
+<line x1="1240" y1="554" x2="940" y2="554" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="950" y="533.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mwr_oob_i  [1]</text>
+<rect x="1240" y="598" width="280" height="355" rx="10" fill="#fff4e6" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="1252" y="610.0" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Memory manager</text>
+<text x="1252" y="634.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">weight stream (exists today;</text>
+<text x="1252" y="651.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">pending a team decision)</text>
+<text x="1252" y="669.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="1252" y="686.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">wreq_* asks for tensor wid;</text>
+<text x="1252" y="704.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">then one beat stream (w_*) and</text>
+<text x="1252" y="721.5" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">one scale stream (ws_*) per</text>
+<text x="1252" y="739.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057" dominant-baseline="hanging" xml:space="preserve">slice, in layout L0</text>
+<line x1="940" y1="633" x2="1240" y2="633" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="612.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">wreq_valid_o  [1]</text>
+<line x1="1240" y1="667" x2="940" y2="667" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="646.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">wreq_ready_i  [1]</text>
+<line x1="940" y1="701" x2="1240" y2="701" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="680.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">wreq_id_o  [16]</text>
+<line x1="940" y1="735" x2="1240" y2="735" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="714.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">wreq_{nrowblk,ngroups,wfmt}_o</text>
+<line x1="1240" y1="769" x2="940" y2="769" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="748.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">w_valid_i  [NSlice]</text>
+<line x1="940" y1="803" x2="1240" y2="803" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="782.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">w_ready_o  [NSlice]</text>
+<line x1="1240" y1="837" x2="940" y2="837" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="816.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">w_data_i  [NSlice*Lanes*4]</text>
+<line x1="1240" y1="871" x2="940" y2="871" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="850.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">ws_valid_i  [NSlice]</text>
+<line x1="940" y1="905" x2="1240" y2="905" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="884.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">ws_ready_o  [NSlice]</text>
+<line x1="1240" y1="939" x2="940" y2="939" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="950" y="918.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">ws_data_i  [NSlice*16]</text>
+<rect x="40" y="1023" width="880" height="279.75" rx="10" fill="#f8f9fa" stroke="#1971c2" stroke-width="2"/>
+<text x="58" y="1041.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">mat_cmd_t: proposed packed struct (today: a flat 154-bit body, bpu_isa_pkg Mb* offsets)</text>
+<text x="58" y="1059.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="58" y="1078.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">field       bits   meaning</text>
+<text x="58" y="1097.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">op          2      GEMV | GEMM | OUTER</text>
+<text x="58" y="1116.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">profile     2      BYTE_DOT | QSTATE_S16 | QSTATE_U16 | Q824_ORDERED</text>
+<text x="58" y="1134.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">a_type      3      INT4 | INT8 | INT16 | UINT16 | INT32</text>
+<text x="58" y="1153.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">b_type      3      same choices as a_type</text>
+<text x="58" y="1172.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">shift       6      fraction bits f to shift out, round-to-nearest-even</text>
+<text x="58" y="1191.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">accumulate  1      c += result (OUTER) instead of c = result</text>
+<text x="58" y="1209.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">argmax      1      write only the largest row's index (LM head; exists today)</text>
+<text x="58" y="1228.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">m, n, k     3x20   dimensions (n reaches 248,320 for the LM head)</text>
+<text x="58" y="1247.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">a, b, c     3x64   views: base address + row stride; a and b in, c out</text>
+<text x="58" y="1266.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">wid         16     weight tensor id, only if weights stream (exists today)</text>
+<rect x="960" y="1023" width="560" height="317.25" rx="10" fill="#fff4e6" stroke="#e8590c" stroke-width="2"/>
+<text x="978" y="1041.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">Open decisions that change these ports</text>
+<text x="978" y="1059.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve"></text>
+<text x="978" y="1078.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">1. Weights from SRAM, or streamed?</text>
+<text x="978" y="1097.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   -&gt; keep or drop the memory-manager group</text>
+<text x="978" y="1116.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">2. Block scaling (slides: TBD)</text>
+<text x="978" y="1134.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   -&gt; scale streams ws_* stay, change or go</text>
+<text x="978" y="1153.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">3. Address units: today fp32-element addresses.</text>
+<text x="978" y="1172.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   INT4/8/16 data in SRAM needs byte addresses</text>
+<text x="978" y="1191.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   and byte write masks</text>
+<text x="978" y="1209.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">4. Read bandwidth: OUTER reads S, k and Δ;</text>
+<text x="978" y="1228.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   GEMV reads A and x -&gt; NRdPorts</text>
+<text x="978" y="1247.2" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">5. Saturation: an error (err_code_o) or a</text>
+<text x="978" y="1266.0" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   sticky flag (flag_sat_o)?</text>
+<text x="978" y="1284.8" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">6. Command encoding belongs to control/ISA;</text>
+<text x="978" y="1303.5" font-family="Cascadia Code, Consolas, monospace" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">   mat_cmd_t is our proposal to them</text>
+<line x1="40" y1="1380.25" x2="100" y2="1380.25" stroke="#1e1e1e" stroke-width="2" marker-end="url(#mk)"/>
+<text x="112" y="1370.2" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#1e1e1e" dominant-baseline="hanging" xml:space="preserve">exists today in bpu_qmv_engine</text>
+<line x1="400" y1="1380.25" x2="460" y2="1380.25" stroke="#1971c2" stroke-width="2" marker-end="url(#mb)"/>
+<text x="472" y="1370.2" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#1971c2" dominant-baseline="hanging" xml:space="preserve">exists, changes for the slides</text>
+<line x1="760" y1="1380.25" x2="820" y2="1380.25" stroke="#2f9e44" stroke-width="2" marker-end="url(#mg)"/>
+<text x="832" y="1370.2" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#2f9e44" dominant-baseline="hanging" xml:space="preserve">new for the slides</text>
+<line x1="1120" y1="1380.25" x2="1180" y2="1380.25" stroke="#e8590c" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#mo)"/>
+<text x="1192" y="1370.2" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#e8590c" dominant-baseline="hanging" xml:space="preserve">pending a team decision</text></svg>
